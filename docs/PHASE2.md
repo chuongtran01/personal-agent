@@ -15,7 +15,7 @@ The evals are the spec: the retrieval dataset is written before the search code 
 
 - [x] **Seed memories**: `data/seed_memories.yaml`. 42 hand-written memories for one fake owner, across all four kinds. Some are deliberately not retrievable: superseded rows with a replacement, deleted rows, events that already happened, and `external` rows
 - [x] **Embedder**: `backend/app/memory/embeddings.py`. A small `Embedder` interface with an OpenAI implementation (`text-embedding-3-small`, batched) and a fake one for tests, so nothing but the real eval needs an API key
-- [ ] **Seed loader**: `backend/app/memory/seed.py` (`make seed`). Loads the YAML into `memories` with embeddings and writes a `created` row per memory in `memory_events`; a second run writes nothing
+- [x] **Seed loader**: `backend/app/memory/seed.py` (`make seed`). Loads the YAML into `memories` with embeddings and writes a `created` row per memory in `memory_events`, plus a `superseded` or `deleted` row where it applies; a second run writes nothing
 - [ ] **Search**: `backend/app/memory/search.py`. Keyword, vector and hybrid search behind one `search()` function, with reciprocal rank fusion and a recency term; reads only usable memories
 - [ ] **Retrieval eval dataset**: `evals/datasets/memory_retrieval.dev.jsonl` and `memory_retrieval.test.jsonl`. Questions with the memories that should come back and the ones that must not
 - [ ] **Retrieval eval runner**: `evals/memory_retrieval_eval.py` (`make eval-memory-retrieval`). Validates the dataset, scores each mode on the chosen split and writes a results file
@@ -102,7 +102,7 @@ make eval-memory-retrieval   # dev split
 
 | Check | Expected result |
 | --- | --- |
-| Seed loads | 42 memories and as many `created` events; a second run changes nothing |
+| Seed loads | 42 memories, 42 `created` events and 8 `superseded` or `deleted` events; a second run changes nothing |
 | Leaks | Zero forbidden memories returned, in all four modes, on dev and on test |
 | Baseline | recall@5 and MRR recorded for keyword, vector, hybrid and hybrid with recency, on dev and on test |
 | `pytest` | All tests pass without an API key |

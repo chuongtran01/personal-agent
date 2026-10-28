@@ -1,4 +1,4 @@
-.PHONY: up down db-reset migrate install hooks test lint eval-memory
+.PHONY: up down db-reset migrate seed install hooks test lint eval-memory
 
 up:
 	docker compose up -d db
@@ -11,6 +11,10 @@ db-reset:
 
 migrate:
 	cd backend && .venv/bin/alembic upgrade head
+
+# Load the seed memories (needs OPENAI_API_KEY); ARGS=--reset empties the memory tables first
+seed:
+	cd backend && .venv/bin/python -m app.memory.seed $(ARGS)
 
 install:
 	cd backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
