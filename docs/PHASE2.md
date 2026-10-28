@@ -13,7 +13,7 @@ The evals are the spec: the retrieval dataset is written before the search code 
 
 ## Deliverables
 
-- [ ] **Seed memories**: `data/seed_memories.yaml`. About 40 hand-written memories for one fake owner, across all four kinds. Some are deliberately not retrievable: superseded rows with a replacement, deleted rows, events that already happened, and `external` rows
+- [x] **Seed memories**: `data/seed_memories.yaml`. 42 hand-written memories for one fake owner, across all four kinds. Some are deliberately not retrievable: superseded rows with a replacement, deleted rows, events that already happened, and `external` rows
 - [ ] **Embedder**: `backend/app/memory/embeddings.py`. A small `Embedder` interface with an OpenAI implementation (`text-embedding-3-small`, batched) and a fake one for tests, so nothing but the real eval needs an API key
 - [ ] **Seed loader**: `backend/app/memory/seed.py` (`make seed`). Loads the YAML into `memories` with embeddings and writes a `created` row per memory in `memory_events`; a second run writes nothing
 - [ ] **Search**: `backend/app/memory/search.py`. Keyword, vector and hybrid search behind one `search()` function, with reciprocal rank fusion and a recency term; reads only usable memories
@@ -29,10 +29,10 @@ One fake owner with a made-up life, so the data is safe to commit and to send to
 | Group | Count (about) | Why it is there |
 | --- | --- | --- |
 | Ordinary active memories | 20 | Facts, preferences and episodes the owner would plausibly state: home, work, diet, habits, people, routines |
-| Superseded pairs | 5 | An old row (`superseded`, `superseded_by` set) and its replacement. Retrieval must return the new one and never the old one |
+| Superseded | 5 | Old rows (`superseded`, `superseded_by` set) whose replacements are among the ordinary memories. Retrieval must return the new one and never the old one |
 | Deleted | 3 | `status = deleted`. Must never come back, whatever the question |
 | Past events | 4 | `valid_until` before the eval clock. Must not be offered as upcoming |
-| Future events | 3 | `valid_from` or `valid_until` ahead of the clock. Should be retrievable |
+| Future events and later facts | 3 | Two events with `valid_until` ahead of the clock, which are retrievable, and one fact with `valid_from` ahead of the clock (a job that starts in January), which is hidden until the caller asks for upcoming facts |
 | `external` | 4 | From an email or event; one carries a hidden instruction. Retrievable only when the call allows it, and always labelled |
 | Near-duplicates | 3 | The same fact in different words, to see whether search ranks them together |
 
@@ -96,13 +96,13 @@ make eval-memory-retrieval   # dev split
 | Recency in the first baseline | Report hybrid with and without it, so the effect is visible |
 | Upcoming events | Retrievable with a flag; the default read path hides events that have not started yet only if the caller says so |
 | External memories | Excluded by default; included only with `include_external=True` and always returned with `source_kind` |
-| Embedding the whole seed set | About 40 memories, a fraction of a cent |
+| Embedding the whole seed set | 42 memories, a fraction of a cent |
 
 ## Gate check
 
 | Check | Expected result |
 | --- | --- |
-| Seed loads | About 40 memories and as many `created` events; a second run changes nothing |
+| Seed loads | 42 memories and as many `created` events; a second run changes nothing |
 | Leaks | Zero forbidden memories returned, in all four modes, on dev and on test |
 | Baseline | recall@5 and MRR recorded for keyword, vector, hybrid and hybrid with recency, on dev and on test |
 | `pytest` | All tests pass without an API key |
