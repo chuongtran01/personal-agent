@@ -14,7 +14,7 @@ The evals are the spec: the retrieval dataset is written before the search code 
 ## Deliverables
 
 - [x] **Seed memories**: `data/seed_memories.yaml`. 42 hand-written memories for one fake owner, across all four kinds. Some are deliberately not retrievable: superseded rows with a replacement, deleted rows, events that already happened, and `external` rows
-- [ ] **Embedder**: `backend/app/memory/embeddings.py`. A small `Embedder` interface with an OpenAI implementation (`text-embedding-3-small`, batched) and a fake one for tests, so nothing but the real eval needs an API key
+- [x] **Embedder**: `backend/app/memory/embeddings.py`. A small `Embedder` interface with an OpenAI implementation (`text-embedding-3-small`, batched) and a fake one for tests, so nothing but the real eval needs an API key
 - [ ] **Seed loader**: `backend/app/memory/seed.py` (`make seed`). Loads the YAML into `memories` with embeddings and writes a `created` row per memory in `memory_events`; a second run writes nothing
 - [ ] **Search**: `backend/app/memory/search.py`. Keyword, vector and hybrid search behind one `search()` function, with reciprocal rank fusion and a recency term; reads only usable memories
 - [ ] **Retrieval eval dataset**: `evals/datasets/memory_retrieval.dev.jsonl` and `memory_retrieval.test.jsonl`. Questions with the memories that should come back and the ones that must not
