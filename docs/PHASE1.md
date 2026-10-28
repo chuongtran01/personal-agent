@@ -11,7 +11,7 @@ Stand up the repo, the database and a minimal backend so later phases have a pla
 
 - [x] **Git repo** (repo root): Own repository from the start; `.gitignore` covers `.env`, `.venv`, `evals/results/`
 - [x] **Database container** (`docker-compose.yml`): `pgvector/pgvector:pg16`, host port 5432 (set `DB_PORT` in `.env` if another database already uses it), named volume `pgdata`, healthcheck
-- [ ] **Schema** (`backend/app/models.py`, `backend/migrations/`): Six tables, created by Alembic migration `0001`
+- [x] **Schema** (`backend/app/models.py`, `backend/migrations/`): Six tables, created by Alembic migration `0001`
 - [x] **Backend project** (`backend/pyproject.toml`): Python 3.12+, FastAPI, SQLAlchemy 2.0 (async), Alembic, psycopg 3, pgvector, OpenAI, Langfuse; `dev` extras for pytest and ruff
 - [x] **Settings** (`backend/app/config.py`): Reads `.env`; database URL, model names, embedding dimensions
 - [x] **DB access** (`backend/app/db.py`): Async engine and session factory; `get_session` dependency
@@ -20,7 +20,7 @@ Stand up the repo, the database and a minimal backend so later phases have a pla
 - [ ] **Memory traps file** (`data/memory_traps.yaml`): The eight traps from `DESIGN.md`, each with a scenario, a probe and the expected behavior
 - [ ] **Eval skeleton** (`evals/`): `datasets/` with the schema for a multi-session case (turns, gap, probe, check), a runner that loads and validates a dataset and runs zero cases
 - [x] **Env template** (`.env.example`): Database, OpenAI, model names, Langfuse
-- [ ] **Dev commands** (`Makefile`): `up`, `down`, `db-reset`, `migrate`, `install`, `test`, `lint`
+- [x] **Dev commands** (`Makefile`): `up`, `down`, `db-reset`, `migrate`, `install`, `test`, `lint`
 - [ ] **Git hooks** (`.pre-commit-config.yaml` or `.githooks/`): ruff and tests before commit
 
 ## Schema
