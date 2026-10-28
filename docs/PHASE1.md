@@ -9,8 +9,8 @@ Stand up the repo, the database and a minimal backend so later phases have a pla
 
 ## Deliverables
 
-- [x] **Git repo** (repo root): Own repository from the start (Northwind began inside the home-directory repo and had to move); `.gitignore` covers `.env`, `.venv`, `evals/results/`
-- [ ] **Database container** (`docker-compose.yml`): `pgvector/pgvector:pg16`, host port 5432 (the Northwind database must be stopped first, or set `DB_PORT` in `.env`), named volume `pgdata`, healthcheck
+- [x] **Git repo** (repo root): Own repository from the start; `.gitignore` covers `.env`, `.venv`, `evals/results/`
+- [ ] **Database container** (`docker-compose.yml`): `pgvector/pgvector:pg16`, host port 5432 (set `DB_PORT` in `.env` if another database already uses it), named volume `pgdata`, healthcheck
 - [ ] **Schema** (`backend/app/models.py`, `backend/migrations/`): Six tables, created by Alembic migration `0001`
 - [ ] **Backend project** (`backend/pyproject.toml`): Python 3.12+, FastAPI, SQLAlchemy 2.0 (async), Alembic, psycopg 3, pgvector, OpenAI, Langfuse; `dev` extras for pytest and ruff
 - [ ] **Settings** (`backend/app/config.py`): Reads `.env`; database URL, model names, embedding dimensions
@@ -21,7 +21,7 @@ Stand up the repo, the database and a minimal backend so later phases have a pla
 - [ ] **Eval skeleton** (`evals/`): `datasets/` with the schema for a multi-session case (turns, gap, probe, check), a runner that loads and validates a dataset and runs zero cases
 - [ ] **Env template** (`.env.example`): Database, OpenAI, model names, Langfuse
 - [ ] **Dev commands** (`Makefile`): `up`, `down`, `db-reset`, `migrate`, `install`, `test`, `lint`
-- [ ] **Git hooks** (`.pre-commit-config.yaml` or `.githooks/`): ruff and tests before commit, as in Northwind
+- [ ] **Git hooks** (`.pre-commit-config.yaml` or `.githooks/`): ruff and tests before commit
 
 ## Schema
 
@@ -43,7 +43,7 @@ Design points that later phases depend on:
 
 ## Memory traps file
 
-`data/memory_traps.yaml` is the ground-truth manifest, like `traps.yaml` in Northwind. Each entry has an id, the turns to say, the gap between sessions, the probe question and the expected behavior. Phase 4 builds the eval set from it so data and tests stay in sync.
+`data/memory_traps.yaml` is the ground-truth manifest. Each entry has an id, the turns to say, the gap between sessions, the probe question and the expected behavior. Phase 4 builds the eval set from it so data and tests stay in sync.
 
 | Trap | Expected behavior |
 | --- | --- |
@@ -74,9 +74,9 @@ curl localhost:8000/health
 | --- | --- |
 | Project name and repo name | `personal-agent` |
 | Chat surface | Terminal client in phase 3; web UI only if a demo needs it |
-| Layout | `backend/`, `evals/`, `data/`, `docs/`, same as Northwind |
+| Layout | `backend/`, `evals/`, `data/`, `docs/` |
 | Database port | 5432, with `DB_PORT` in `.env` to override |
-| Tooling | pip, ruff, pytest, same Makefile and hooks as Northwind |
+| Tooling | pip, ruff, pytest, a Makefile and git hooks |
 
 ## Gate check
 
