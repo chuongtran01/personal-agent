@@ -1,4 +1,4 @@
-.PHONY: up down db-reset migrate install test lint eval-memory
+.PHONY: up down db-reset migrate install hooks test lint eval-memory
 
 up:
 	docker compose up -d db
@@ -15,11 +15,15 @@ migrate:
 install:
 	cd backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
+# Git hooks: quick checks before a commit, the tests before a push (see .githooks/).
+hooks:
+	git config core.hooksPath .githooks
+
 test:
 	cd backend && .venv/bin/pytest
 
 lint:
-	cd backend && .venv/bin/ruff check .
+	cd backend && .venv/bin/ruff check --config pyproject.toml . ../evals
 
 eval-memory:
 	cd backend && .venv/bin/python ../evals/memory_eval.py $(ARGS)

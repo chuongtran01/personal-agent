@@ -1,6 +1,6 @@
 # Phase 1: Foundation
 
-**Status:** not started
+**Status:** done
 **Gate:** schema loads, `/health` ok
 
 ## Goal
@@ -21,7 +21,7 @@ Stand up the repo, the database and a minimal backend so later phases have a pla
 - [x] **Eval skeleton** (`evals/`): `datasets/` with the schema for a multi-session case (turns, gap, probe, check), a runner that loads and validates a dataset and runs zero cases
 - [x] **Env template** (`.env.example`): Database, OpenAI, model names, Langfuse
 - [x] **Dev commands** (`Makefile`): `up`, `down`, `db-reset`, `migrate`, `install`, `test`, `lint`
-- [ ] **Git hooks** (`.pre-commit-config.yaml` or `.githooks/`): ruff and tests before commit
+- [x] **Git hooks** (`.githooks/`, turned on by `make hooks`): ruff before commit, tests before push
 
 ## Schema
 
@@ -80,13 +80,20 @@ curl localhost:8000/health
 
 ## Gate check
 
-| Check | Expected result |
+| Check | Result |
 | --- | --- |
-| Schema loads on an empty volume | Six tables created by `alembic upgrade head`; `vector` extension present |
+| Schema loads on an empty volume | Six tables created by `alembic upgrade head` (`make db-reset`); `vector` extension present; `alembic check` finds no drift and downgrade then upgrade works |
 | `GET /health` | Returns `{"status": "ok"}` against the fresh database |
 | Traps file | Loads and validates; eight entries |
-| Eval runner | Loads the empty dataset and exits cleanly |
-| `pytest` | Model, config, health and traps-file tests pass |
+| Eval runner | `make eval-memory` loads the empty dataset and exits cleanly (`dev: 0 cases, 8 traps defined`) |
+| `pytest` | 26 tests pass: config, health, models and constraints, traps file, case loader, runner |
+| Git hooks | `make hooks` turns them on; the pre-commit hook blocks an unformatted file, the pre-push hook runs ruff and the tests |
+
+## Decisions and incidents
+
+- **Port.** The default is 5432, but another local container (`film-rating-db-1`) already used it, so the local `.env` sets `DB_PORT=5434` and the matching `DATABASE_URL`.
+- **No owner column.** There is one owner, so sessions, memories and idempotency keys carry no owner id.
+- **Traps in YAML, cases in JSONL.** The eight traps are a small hand-written spec; the eval cases are bulk data read line by line.
 
 ## Not in this phase
 

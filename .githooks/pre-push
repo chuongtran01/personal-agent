@@ -1,0 +1,35 @@
+#!/bin/sh
+# The tests, for whichever side the pushed commits touch. Slower: the backend tests need the
+# database running (`make up`). Turn this on with `make hooks`.
+HOOK=pre-push
+. "$(dirname "$0")/lib.sh"
+cd "$ROOT" || exit 1
+
+ZERO=0000000000000000000000000000000000000000
+
+# Git gives one line per ref being pushed: <local ref> <local sha> <remote ref> <remote sha>.
+CHANGED=""
+while read -r _ local_sha _ remote_sha; do
+  [ "$local_sha" = "$ZERO" ] && continue # deleting a branch: nothing to check
+  base=""
+  if [ "$remote_sha" != "$ZERO" ] && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    base="$remote_sha"
+  elif git rev-parse -q --verify origin/main >/dev/null; then
+    base="$(git merge-base "$local_sha" origin/main 2>/dev/null)" # a new branch
+  fi
+  if [ -n "$base" ]; then
+    CHANGED="$CHANGED
+$(git diff --name-only "$base" "$local_sha")"
+  else
+    CHANGED="$CHANGED
+$(git ls-tree -r --name-only "$local_sha")" # no common history: check everything
+  fi
+done
+[ -z "$(printf '%s' "$CHANGED" | tr -d '[:space:]')" ] && exit 0
+
+if touches_backend; then
+  need_backend
+  echo "backend"
+  run "ruff check" sh -c "cd backend && .venv/bin/ruff check --config pyproject.toml . ../evals"
+  run "tests (needs the database: make up)" sh -c "cd backend && .venv/bin/python -m pytest -q -x"
+fi
