@@ -9,6 +9,7 @@ asked in a new session. The runner checks the probe's reply with code, not a jud
 """
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -20,6 +21,9 @@ DATASETS = ROOT / "datasets"
 TRAPS = ROOT.parent / "data" / "memory_traps.yaml"
 
 SPLITS = ("dev", "test")
+
+# The clock the retrieval eval runs on, so "already happened" does not move with the real date
+EVAL_NOW = datetime(2026, 10, 28, 12, 0, tzinfo=UTC)
 
 Category = Literal[
     "recall", "update", "forgetting", "relevance", "stale", "sensitive", "duplicate", "injection"

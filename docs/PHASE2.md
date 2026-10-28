@@ -16,7 +16,7 @@ The evals are the spec: the retrieval dataset is written before the search code 
 - [x] **Seed memories**: `data/seed_memories.yaml`. 42 hand-written memories for one fake owner, across all four kinds. Some are deliberately not retrievable: superseded rows with a replacement, deleted rows, events that already happened, and `external` rows
 - [x] **Embedder**: `backend/app/memory/embeddings.py`. A small `Embedder` interface with an OpenAI implementation (`text-embedding-3-small`, batched) and a fake one for tests, so nothing but the real eval needs an API key
 - [x] **Seed loader**: `backend/app/memory/seed.py` (`make seed`). Loads the YAML into `memories` with embeddings and writes a `created` row per memory in `memory_events`, plus a `superseded` or `deleted` row where it applies; a second run writes nothing
-- [ ] **Search**: `backend/app/memory/search.py`. Keyword, vector and hybrid search behind one `search()` function, with reciprocal rank fusion and a recency term; reads only usable memories
+- [x] **Search**: `backend/app/memory/search.py`. Keyword, vector and hybrid search behind one `search()` function, with reciprocal rank fusion and a recency term; reads only usable memories
 - [ ] **Retrieval eval dataset**: `evals/datasets/memory_retrieval.dev.jsonl` and `memory_retrieval.test.jsonl`. Questions with the memories that should come back and the ones that must not
 - [ ] **Retrieval eval runner**: `evals/memory_retrieval_eval.py` (`make eval-memory-retrieval`). Validates the dataset, scores each mode on the chosen split and writes a results file
 - [ ] **Tests**: `backend/tests/`. Rank fusion, recency, the usable-memory filter on a real database, the embedder with a fake client, the seed loader and its idempotence, and the runner's metrics and dataset validation
@@ -57,7 +57,7 @@ The eval runs against a fixed clock (`EVAL_NOW` in the dataset module), so "alre
 
 - `status = 'active'`
 - `valid_until` is null or after `now`
-- `valid_from` is null or before `now`, unless the caller asks for upcoming events
+- `valid_from` is null or not after `now`, unless the caller passes `include_upcoming=True`
 - `source_kind = 'owner'`, unless the caller passes `include_external=True`; external results are returned with their `source_kind` so the prompt can label them
 
 **Recency.** `recency = exp(-age_days / half_life_days)` where age is measured from `COALESCE(valid_from, created_at)` to `now`. The final score is `rrf + recency_weight * recency`. `now` is a parameter, never `datetime.now()` inside the search, so the eval controls the clock. The weight and half-life are settings; the first values are guesses, tuned on dev only and changed in this doc if they move.

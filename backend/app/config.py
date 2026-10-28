@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     # Must match the vector column in the memories table
     embedding_dimensions: int = 1536
 
+    # Memory search adds `recency_weight * exp(-age_days / recency_half_life_days)` to the fused
+    # score. Reciprocal rank fusion scores sit around 0.01 to 0.03, so the weight is small
+    recency_weight: float = 0.005
+    recency_half_life_days: float = 90
+
     # Tracing to Langfuse. Both keys empty means no tracing. The base URL is the one for your
     # project's region; empty uses the SDK's default
     langfuse_public_key: str = ""
