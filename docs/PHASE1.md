@@ -17,8 +17,8 @@ Stand up the repo, the database and a minimal backend so later phases have a pla
 - [x] **DB access** (`backend/app/db.py`): Async engine and session factory; `get_session` dependency
 - [x] **API stub** (`backend/app/main.py`): `GET /health` runs `SELECT 1` against the pool
 - [x] **Package layout** (`backend/app/{agent,memory,tools,api}/`): Empty packages, filled in later phases
-- [ ] **Memory traps file** (`data/memory_traps.yaml`): The eight traps from `DESIGN.md`, each with a scenario, a probe and the expected behavior
-- [ ] **Eval skeleton** (`evals/`): `datasets/` with the schema for a multi-session case (turns, gap, probe, check), a runner that loads and validates a dataset and runs zero cases
+- [x] **Memory traps file** (`data/memory_traps.yaml`): The eight traps from `DESIGN.md`, each with a scenario, a probe and the expected behavior
+- [x] **Eval skeleton** (`evals/`): `datasets/` with the schema for a multi-session case (turns, gap, probe, check), a runner that loads and validates a dataset and runs zero cases
 - [x] **Env template** (`.env.example`): Database, OpenAI, model names, Langfuse
 - [x] **Dev commands** (`Makefile`): `up`, `down`, `db-reset`, `migrate`, `install`, `test`, `lint`
 - [ ] **Git hooks** (`.pre-commit-config.yaml` or `.githooks/`): ruff and tests before commit

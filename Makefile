@@ -1,4 +1,4 @@
-.PHONY: up down db-reset migrate install test lint
+.PHONY: up down db-reset migrate install test lint eval-memory
 
 up:
 	docker compose up -d db
@@ -20,3 +20,6 @@ test:
 
 lint:
 	cd backend && .venv/bin/ruff check .
+
+eval-memory:
+	cd backend && .venv/bin/python ../evals/memory_eval.py $(ARGS)
