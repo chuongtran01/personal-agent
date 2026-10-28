@@ -10,7 +10,7 @@ Stand up the repo, the database and a minimal backend so later phases have a pla
 ## Deliverables
 
 - [x] **Git repo** (repo root): Own repository from the start (Northwind began inside the home-directory repo and had to move); `.gitignore` covers `.env`, `.venv`, `evals/results/`
-- [ ] **Database container** (`docker-compose.yml`): `pgvector/pgvector:pg16`, a host port that does not clash with Northwind (5434), named volume `pgdata`, healthcheck
+- [ ] **Database container** (`docker-compose.yml`): `pgvector/pgvector:pg16`, host port 5432 (the Northwind database must be stopped first, or set `DB_PORT` in `.env`), named volume `pgdata`, healthcheck
 - [ ] **Schema** (`backend/app/models.py`, `backend/migrations/`): Six tables, created by Alembic migration `0001`
 - [ ] **Backend project** (`backend/pyproject.toml`): Python 3.12+, FastAPI, SQLAlchemy 2.0 (async), Alembic, psycopg 3, pgvector, OpenAI, Langfuse; `dev` extras for pytest and ruff
 - [ ] **Settings** (`backend/app/config.py`): Reads `.env`; database URL, model names, embedding dimensions
@@ -60,7 +60,7 @@ Design points that later phases depend on:
 
 ```sh
 cp .env.example .env
-make up          # starts Postgres on localhost:5434
+make up          # starts Postgres on localhost:5432
 make install     # creates backend/.venv and installs dependencies
 make migrate     # applies Alembic migrations
 make test
@@ -75,7 +75,7 @@ curl localhost:8000/health
 | Project name and repo name | `personal-agent` |
 | Chat surface | Terminal client in phase 3; web UI only if a demo needs it |
 | Layout | `backend/`, `evals/`, `data/`, `docs/`, same as Northwind |
-| Database port | 5434 |
+| Database port | 5432, with `DB_PORT` in `.env` to override |
 | Tooling | pip, ruff, pytest, same Makefile and hooks as Northwind |
 
 ## Gate check
