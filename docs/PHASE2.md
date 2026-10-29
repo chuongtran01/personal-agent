@@ -18,7 +18,7 @@ The evals are the spec: the retrieval dataset is written before the search code 
 - [x] **Seed loader**: `backend/app/memory/seed.py` (`make seed`). Loads the YAML into `memories` with embeddings and writes a `created` row per memory in `memory_events`, plus a `superseded` or `deleted` row where it applies; a second run writes nothing
 - [x] **Search**: `backend/app/memory/search.py`. Keyword, vector and hybrid search behind one `search()` function, with reciprocal rank fusion and a recency term; reads only usable memories
 - [x] **Retrieval eval dataset**: `evals/datasets/memory_retrieval.dev.jsonl` and `memory_retrieval.test.jsonl`. Questions with the memories that should come back and the ones that must not
-- [ ] **Retrieval eval runner**: `evals/memory_retrieval_eval.py` (`make eval-memory-retrieval`). Validates the dataset, scores each mode on the chosen split and writes a results file
+- [x] **Retrieval eval runner**: `evals/memory_retrieval_eval.py` (`make eval-memory-retrieval`). Validates the dataset, scores each mode on the chosen split and writes a results file
 - [ ] **Tests**: `backend/tests/`. Rank fusion, recency, the usable-memory filter on a real database, the embedder with a fake client, the seed loader and its idempotence, and the runner's metrics and dataset validation
 - [ ] **Baseline numbers**: recorded in this doc, dev first, then test once
 
@@ -68,7 +68,7 @@ The eval runs against a fixed clock (`EVAL_NOW` in the dataset module), so "alre
 
 ## Retrieval eval
 
-- **Dataset.** Two files, one JSON object per line. Every row has: `id`, `category`, `question`, `relevant_keys` (memories that should come back), `forbidden_keys` (memories that must not, such as the superseded or deleted twin of the right answer), `include_external` (false by default), `expect_no_answer` (false by default), `trap_id` and `note`. The runner validates each row against one Pydantic model and fails on a missing or unknown field, an unknown memory key, or an id or question that appears in both files.
+- **Dataset.** Two files, one JSON object per line. Every row has the same ten fields, with an empty value where one does not apply: `id`, `category`, `question`, `relevant_keys` (memories that should come back), `forbidden_keys` (memories that must not, such as the superseded or deleted twin of the right answer), `include_external`, `include_upcoming`, `expect_no_answer`, `trap_id` and `note`. The runner validates each row against one Pydantic model and fails on a missing or unknown field, an unknown memory key, or an id or question that appears in both files.
 - **Coverage.** Direct questions, paraphrases that share no words with the memory (where vector search should win), exact-term questions (names, places, where keyword should win), changed-fact questions where the old value is forbidden, forgotten-memory questions, stale-event questions, questions that need two memories, unrelated questions where nothing should come back, and questions where an `external` memory is the only match.
 - **Dev and test.** Dev is for tuning the recency weight and half-life and is the only split read by default. Test is held out, read once with `--split test`, and is the headline. Rows written without looking at the memories go in test.
 - **Metrics.** Each question retrieves 10 memories.

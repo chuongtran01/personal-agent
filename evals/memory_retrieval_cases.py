@@ -15,7 +15,7 @@ from typing import Literal
 
 import yaml
 from memory_cases import EVAL_NOW, InvalidDataset
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.memory.seed import SEED_FILE, InvalidSeed, SeedMemory, load_seed
 
@@ -43,18 +43,20 @@ Category = Literal[
 
 
 class RetrievalCase(BaseModel):
+    """Every field is required, with an empty value where it does not apply, so all rows look alike."""
+
     model_config = ConfigDict(extra="forbid")
 
     id: str
     category: Category
     question: str
-    relevant_keys: list[str] = Field(default_factory=list)
-    forbidden_keys: list[str] = Field(default_factory=list)
-    include_external: bool = False
-    include_upcoming: bool = False
-    expect_no_answer: bool = False
-    trap_id: str | None = None
-    note: str | None = None
+    relevant_keys: list[str]
+    forbidden_keys: list[str]
+    include_external: bool
+    include_upcoming: bool
+    expect_no_answer: bool
+    trap_id: str | None
+    note: str | None
 
 
 def load_seed_index(path: Path = SEED) -> dict[str, SeedMemory]:
@@ -65,7 +67,7 @@ def load_seed_index(path: Path = SEED) -> dict[str, SeedMemory]:
         raise InvalidDataset(str(error)) from error
 
 
-def _why_not_returnable(memory: SeedMemory, case: RetrievalCase) -> str | None:
+def why_not_returnable(memory: SeedMemory, case: RetrievalCase) -> str | None:
     if memory.status != "active":
         return f"is {memory.status}"
     if memory.source_kind == "external" and not case.include_external:
@@ -118,7 +120,7 @@ def load_cases(
                 f"{where}: relevant_keys must be empty exactly when expect_no_answer is set"
             )
         for key in case.relevant_keys:
-            reason = _why_not_returnable(seed[key], case)
+            reason = why_not_returnable(seed[key], case)
             if reason:
                 raise InvalidDataset(f"{where}: relevant memory {key} {reason}")
         if case.trap_id is not None and case.trap_id not in trap_ids:

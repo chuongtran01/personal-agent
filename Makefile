@@ -1,4 +1,4 @@
-.PHONY: up down db-reset migrate seed install hooks test lint eval-memory
+.PHONY: up down db-reset migrate seed install hooks test lint eval-memory eval-memory-retrieval
 
 up:
 	docker compose up -d db
@@ -31,3 +31,7 @@ lint:
 
 eval-memory:
 	cd backend && .venv/bin/python ../evals/memory_eval.py $(ARGS)
+
+# Retrieval eval on the seeded memories, in its own database. ARGS="--split test" for the held-out split
+eval-memory-retrieval:
+	cd backend && .venv/bin/python ../evals/memory_retrieval_eval.py $(ARGS)

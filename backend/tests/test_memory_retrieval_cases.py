@@ -3,7 +3,7 @@ from collections import Counter
 
 import pytest
 from memory_cases import InvalidDataset
-from memory_retrieval_cases import SPLITS, load_all, load_cases
+from memory_retrieval_cases import DATASETS, SPLITS, load_all, load_cases
 
 ROW = {
     "id": "m900",
@@ -11,6 +11,11 @@ ROW = {
     "question": "Where do I live?",
     "relevant_keys": ["home-city"],
     "forbidden_keys": ["home-city-old"],
+    "include_external": False,
+    "include_upcoming": False,
+    "expect_no_answer": False,
+    "trap_id": None,
+    "note": None,
 }
 
 
@@ -51,6 +56,22 @@ def test_the_dataset_covers_the_traps_that_search_can_fail():
         "injection-from-email",
         "near-duplicate",
     } <= traps
+
+
+def test_every_committed_row_has_exactly_the_same_fields():
+    shapes = set()
+    for split in SPLITS:
+        path = DATASETS / f"memory_retrieval.{split}.jsonl"
+        shapes |= {tuple(json.loads(line)) for line in path.read_text().splitlines()}
+
+    assert shapes == {tuple(ROW)}
+
+
+def test_a_row_missing_a_field_is_refused(tmp_path):
+    row = {k: v for k, v in ROW.items() if k != "note"}
+
+    with pytest.raises(InvalidDataset, match="line 1"):
+        load(tmp_path, row)
 
 
 def test_a_valid_row_loads(tmp_path):

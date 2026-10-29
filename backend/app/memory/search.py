@@ -100,11 +100,19 @@ def apply_recency(
     return sorted(scored, key=lambda r: -r.score)
 
 
-def _usable(now: datetime, include_external: bool, include_upcoming: bool) -> list:
-    conditions = [
-        Memory.status == "active",
-        or_(Memory.valid_until.is_(None), Memory.valid_until > now),
-    ]
+def _usable(
+    now: datetime,
+    include_external: bool,
+    include_upcoming: bool,
+    include_inactive: bool = False,
+    include_ended: bool = False,
+) -> list:
+    """The conditions a memory must meet to be returned. Each flag lifts one of them."""
+    conditions = []
+    if not include_inactive:
+        conditions.append(Memory.status == "active")
+    if not include_ended:
+        conditions.append(or_(Memory.valid_until.is_(None), Memory.valid_until > now))
     if not include_upcoming:
         conditions.append(or_(Memory.valid_from.is_(None), Memory.valid_from <= now))
     if not include_external:
@@ -179,14 +187,18 @@ async def search(
     embedder: Embedder | None = None,
     include_external: bool = False,
     include_upcoming: bool = False,
+    include_inactive: bool = False,
+    include_ended: bool = False,
     recency_weight: float | None = None,
     recency_half_life_days: float | None = None,
 ) -> list[SearchResult]:
     """Return the top ``limit`` usable memories for a query. Every mode but keyword needs an
-    embedder. External memories and facts that start later are left out unless asked for."""
+    embedder. External memories, facts that start later, superseded or deleted memories and ended
+    ones are left out unless asked for. The last two flags exist for the eval's negative control
+    (``memory_retrieval_eval.py --control``); the agent never sets them."""
     if mode != "keyword" and embedder is None:
         raise ValueError(f"{mode} search needs an embedder")
-    conditions = _usable(now, include_external, include_upcoming)
+    conditions = _usable(now, include_external, include_upcoming, include_inactive, include_ended)
 
     if mode == "keyword":
         return await keyword_search(session, query, conditions, limit)

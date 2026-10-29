@@ -224,3 +224,21 @@ async def test_the_clock_decides_what_has_already_happened(session, seeded):
     )
 
     assert "dentist-past" in [by_id[r.memory_id] for r in found]
+
+
+async def test_each_include_flag_lifts_its_own_filter(session, seeded):
+    superseded = await keys_for(
+        session, seeded, "lives in Lisbon Alfama", mode="keyword", include_inactive=True
+    )
+    ended = await keys_for(
+        session, seeded, "dentist appointment 3 March", mode="keyword", include_ended=True
+    )
+    default = await keys_for(session, seeded, "lives in Lisbon Alfama", mode="keyword")
+
+    assert "home-city-old" in superseded
+    assert "dentist-past" in ended
+    assert "home-city-old" not in default
+    # Lifting one filter lifts only that one
+    assert "dentist-past" not in await keys_for(
+        session, seeded, "dentist appointment 3 March", mode="keyword", include_inactive=True
+    )
