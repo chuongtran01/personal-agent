@@ -7,7 +7,7 @@
 
 Make memory retrieval work and make it measurable before any agent uses it. By the end, a seeded set of memories can be searched by keyword, by vector and by both fused, with a recency term, and a retrieval eval reports recall@5 and MRR for each. It also reports a leak count: how often a superseded, deleted, expired or external memory comes back when it must not.
 
-Nothing here writes memories from conversation; that is phase 4. This phase reads from a hand-written set, so the read path can be judged on its own and a later failure can be pinned on the write path or the read path.
+Nothing here writes memories from conversation; that is phase 5. This phase reads from a hand-written set, so the read path can be judged on its own and a later failure can be pinned on the write path or the read path.
 
 The evals are the spec: the retrieval dataset is written before the search code it measures.
 
@@ -206,7 +206,7 @@ Limits to keep in mind: the dev split has 25 answerable questions and the test s
 
 ## Not in this phase
 
-- Writing memories from conversation (extraction, reconciliation, supersede and forget): phase 4
+- Writing memories from conversation (extraction, reconciliation, supersede and forget): phase 5
 - Updating `last_used_at`: phase 3, when the loop puts a memory in a prompt
 - Any agent, session or chat surface
 - A reranker

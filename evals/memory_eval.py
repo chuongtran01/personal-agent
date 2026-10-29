@@ -1,7 +1,7 @@
 """Memory eval runner (skeleton).
 
 Loads and validates a split and the traps file, then plays its cases. There are no cases yet and
-nothing to play them against: the agent arrives in phase 3 and memory writes in phase 4. Until
+nothing to play them against: the agent arrives in phase 3 and memory writes in phase 5. Until
 then this checks that the data is well formed.
 
     python ../evals/memory_eval.py --split dev

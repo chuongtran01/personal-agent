@@ -119,7 +119,7 @@ class MemoryEvent(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
-# Tool calls (used from phase 6; created now so the schema does not change under data) -------
+# Tool calls (used from phase 7; created now so the schema does not change under data) -------
 
 
 class IdempotencyKey(Base):

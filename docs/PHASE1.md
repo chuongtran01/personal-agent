@@ -39,11 +39,11 @@ Design points that later phases depend on:
 - `memories.embedding` is `vector(1536)` with an HNSW cosine index; `memories.tsv` is a generated `tsvector` column with a GIN index.
 - `memory_events` is append-only: every write, update and deletion with its reason.
 - `chat_messages.content` is JSONB so tool calls and results can be replayed exactly. `chat_sessions` belongs to one owner; there is no multi-user model.
-- `idempotency_keys` and `tool_audit` are created now but stay empty until phase 6, so the schema does not change under data later.
+- `idempotency_keys` and `tool_audit` are created now but stay empty until phase 7, so the schema does not change under data later.
 
 ## Memory traps file
 
-`data/memory_traps.yaml` is the ground-truth manifest. Each entry has an id, the turns to say, the gap between sessions, the probe question and the expected behavior. Phase 4 builds the eval set from it so data and tests stay in sync.
+`data/memory_traps.yaml` is the ground-truth manifest. Each entry has an id, the turns to say, the gap between sessions, the probe question and the expected behavior. Phase 5 builds the eval set from it so data and tests stay in sync.
 
 | Trap | Expected behavior |
 | --- | --- |
@@ -73,7 +73,7 @@ curl localhost:8000/health
 | Decision | Default if you say nothing |
 | --- | --- |
 | Project name and repo name | `personal-agent` |
-| Chat surface | Terminal client in phase 3; web UI only if a demo needs it |
+| Chat surface | Web app in phase 4, after the API and agent evals; terminal client in phase 10 |
 | Layout | `backend/`, `evals/`, `data/`, `docs/` |
 | Database port | 5432, with `DB_PORT` in `.env` to override |
 | Tooling | pip, ruff, pytest, a Makefile and git hooks |

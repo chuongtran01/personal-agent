@@ -56,7 +56,7 @@ Mostly standard choices, so the new work is the memory and not the plumbing.
 
 | Layer | Choice | Why |
 | --- | --- | --- |
-| Frontend | Open decision (see below) | A web chat, or a terminal client first |
+| Frontend | Web app (Vite, React, TypeScript), from phase 4; a terminal client in phase 10 | The API and agent evals come first, so the UI is built against an API that already works |
 | API | FastAPI | Async, native streaming (SSE), typed request models; already proven here |
 | Agent loop | Hand-written against the OpenAI API | Every step stays visible and testable |
 | LLM | OpenAI, a current model for the agent and as judge | Provider sits behind a thin interface; model chosen by the evals, not by habit |
@@ -154,23 +154,26 @@ The model answers differently each time, so each dev run is repeated three times
 
 ## Development roadmap
 
-Seven phases, each ending in a gate that must pass before the next starts. Docs for a phase are written before its code.
+Ten phases, each ending in a gate that must pass before the next starts. Docs for a phase are written before its code.
 
 | # | Phase | Deliverables | Gate |
 | --- | --- | --- | --- |
 | 1 | Foundation | Repo, Docker Compose, schema, backend stub, memory traps file, eval harness skeleton | Schema loads, `/health` ok |
 | 2 | Memory store and retrieval | `memories` table, embedding, hybrid search with recency, retrieval evals on a hand-written set | recall@5 baseline set |
-| 3 | Agent loop and API | Loop with recall before each call, sessions, auth, streaming API, chat surface | A fact stated in one session is used in the next |
-| 4 | Memory writes | Extraction, reconciliation, supersede and forget, `memory_events`, trap evals | Update, forgetting and false-memory evals run |
-| 5 | Read tools over MCP | MCP client, calendar and email read servers, token per call | Read scenarios pass, injection evals on emails run |
-| 6 | Writes with confirmation | Create and send tools, the confirmation gate, idempotency keys, `unknown` handling | No outside write without a matching confirmation |
-| 7 | Evals, tracing and polish | Full evals, the memory ablation, Langfuse, README, demo | Numbers in the README |
+| 3 | Agent loop and API | Loop with recall before each call, sessions, owner login, streaming API, agent evals with a memory-off arm | A stored fact is used in a new session without being asked, memory on beats memory off, nothing that may not be used reaches the prompt |
+| 4 | Web app | Login, chat list, streaming chat view, "memories used" under each reply, read-only memory list | The owner can log in, chat and see which memories were used, in a browser |
+| 5 | Memory writes | Extraction, reconciliation, supersede and forget, `memory_events`, trap evals, edit and delete in the web app's memory list | A fact stated in one session is used in the next; update, forgetting and false-memory evals run |
+| 6 | Read tools over MCP | MCP client, calendar and email read servers, token per call | Read scenarios pass, injection evals on emails run |
+| 7 | Writes with confirmation | Create and send tools, the confirmation gate, idempotency keys, `unknown` handling | No outside write without a matching confirmation |
+| 8 | Chat compaction | A stored summary replaces old messages in the prompt once the token budget is passed; originals kept; pending confirmations and tool output kept intact or labelled as data | Compaction evals keep early facts and instructions, never drop a pending confirmation, and cut prompt tokens |
+| 9 | Evals, tracing and polish | Full evals, the memory ablation, Langfuse, README, demo | Numbers in the README |
+| 10 | Terminal client | `app/cli.py`, `make chat`: login, streaming reply, memories used, `/memories`; a second client of the same API | The terminal client completes a chat against the running API |
 
 ## Risks and open decisions
 
 | Item | Type | Current plan |
 | --- | --- | --- |
-| Chat surface: web UI, or a terminal client first | Open decision | Terminal first, so the memory work is not waiting on a frontend; add the web UI if the project needs a demo |
+| Chat surface | Decided | Web app from phase 4, after the API and agent evals exist; terminal client in phase 10, a second client of the same API |
 | Which providers: Google, Microsoft, or both, and whether to use existing MCP servers or write them | Open decision | Calendar read-only first. Write the MCP servers, but keep the agent's client provider-neutral |
 | What counts as worth remembering | Open decision | Start with explicit statements by the owner; add inferred preferences only if the evals show they help |
 | Memory extraction by the agent model or a separate cheaper call | Open decision | A separate call after the turn, so it adds no latency to the reply; measure cost |
