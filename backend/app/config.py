@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +18,12 @@ class Settings(BaseSettings):
     # score. Reciprocal rank fusion scores sit around 0.01 to 0.03, so the weight is small (tuned on dev, docs/PHASE2.md)
     recency_weight: float = 0.0005
     recency_half_life_days: float = 365
+
+    # What the agent recalls before each model call (docs/PHASE3.md). `vector` was the best mode in
+    # the phase 2 baseline; the agent eval decides whether to move
+    memory_search_mode: Literal["keyword", "vector", "hybrid", "hybrid_recency"] = "vector"
+    recall_limit: int = 5
+    recall_history_limit: int = 3
 
     # Owner login: one password, kept as an argon2 hash (`python -m app.auth hash`), and a secret
     # that signs the tokens. With either unset, login is closed (docs/PHASE3.md)

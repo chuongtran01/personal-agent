@@ -8,6 +8,10 @@ memories.
 Every mode reads only memories that may be used now: active, not expired, not yet to come, and
 from the owner. The filter is part of the SQL, so a superseded, deleted, expired or external
 memory cannot come back from any mode. ``now`` is always passed in, never read from the clock.
+
+``history=True`` is the one way to read the past: it returns only memories that were replaced and
+events that have ended, never deleted, external or not-yet-started ones. The agent uses it for a
+question about the past, so a replaced fact can never compete with the current one.
 """
 
 import math
@@ -15,7 +19,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import Text, cast, func, or_, select
+from sqlalchemy import Text, and_, cast, func, or_, select
 from sqlalchemy.dialects.postgresql import TSQUERY
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,13 +110,28 @@ def _usable(
     include_upcoming: bool,
     include_inactive: bool = False,
     include_ended: bool = False,
+    history: bool = False,
 ) -> list:
-    """The conditions a memory must meet to be returned. Each flag lifts one of them."""
+    """The conditions a memory must meet to be returned. Each flag lifts one of them.
+
+    ``history`` swaps the status and end checks for their opposite: replaced, or already over."""
     conditions = []
-    if not include_inactive:
-        conditions.append(Memory.status == "active")
-    if not include_ended:
-        conditions.append(or_(Memory.valid_until.is_(None), Memory.valid_until > now))
+    if history:
+        conditions.append(
+            or_(
+                Memory.status == "superseded",
+                and_(
+                    Memory.status == "active",
+                    Memory.valid_until.is_not(None),
+                    Memory.valid_until <= now,
+                ),
+            )
+        )
+    else:
+        if not include_inactive:
+            conditions.append(Memory.status == "active")
+        if not include_ended:
+            conditions.append(or_(Memory.valid_until.is_(None), Memory.valid_until > now))
     if not include_upcoming:
         conditions.append(or_(Memory.valid_from.is_(None), Memory.valid_from <= now))
     if not include_external:
@@ -189,16 +208,22 @@ async def search(
     include_upcoming: bool = False,
     include_inactive: bool = False,
     include_ended: bool = False,
+    history: bool = False,
     recency_weight: float | None = None,
     recency_half_life_days: float | None = None,
 ) -> list[SearchResult]:
     """Return the top ``limit`` usable memories for a query. Every mode but keyword needs an
     embedder. External memories, facts that start later, superseded or deleted memories and ended
     ones are left out unless asked for. The last two flags exist for the eval's negative control
-    (``memory_retrieval_eval.py --control``); the agent never sets them."""
+    (``memory_retrieval_eval.py --control``); the agent never sets them. ``history`` returns the
+    past instead (replaced memories and ended events) and cannot be combined with those two."""
     if mode != "keyword" and embedder is None:
         raise ValueError(f"{mode} search needs an embedder")
-    conditions = _usable(now, include_external, include_upcoming, include_inactive, include_ended)
+    if history and (include_inactive or include_ended):
+        raise ValueError("history cannot be combined with include_inactive or include_ended")
+    conditions = _usable(
+        now, include_external, include_upcoming, include_inactive, include_ended, history
+    )
 
     if mode == "keyword":
         return await keyword_search(session, query, conditions, limit)

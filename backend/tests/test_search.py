@@ -242,3 +242,70 @@ async def test_each_include_flag_lifts_its_own_filter(session, seeded):
     assert "dentist-past" not in await keys_for(
         session, seeded, "dentist appointment 3 March", mode="keyword", include_inactive=True
     )
+
+
+# History mode ----------------------------------------------------------------------------
+
+REPLACED = ["home-city-old", "job-old", "coffee-old", "run-time-old", "commute-old"]
+ENDED = ["dentist-past", "berlin-conference", "marta-wedding", "faro-flight"]
+NEVER_PAST = ["surgery", "ex-partner", "layoff-worry", "ext-injection", "ext-electricity-bill"]
+
+
+@pytest.mark.parametrize("mode", MODES)
+async def test_history_returns_only_replaced_memories_and_ended_events(session, seeded, mode):
+    found = set(await keys_for(session, seeded, "owner", mode=mode, history=True))
+
+    assert found and found <= set(REPLACED + ENDED)
+    if mode != "keyword":  # keyword search only returns memories that share a term
+        assert found == set(REPLACED + ENDED)
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("key", NEVER_PAST + ["new-studio", "home-city", "dentist-future"])
+async def test_history_never_returns_deleted_external_upcoming_or_current_memories(
+    session, seeded, mode, key
+):
+    _, by_key = seeded
+
+    found = await keys_for(session, seeded, by_key[key].content, mode=mode, history=True)
+
+    assert key not in found
+
+
+async def test_the_default_search_still_hides_the_past(session, seeded):
+    found = set(await keys_for(session, seeded, "owner", mode="vector"))
+
+    assert not found & set(REPLACED + ENDED)
+
+
+async def test_history_ranks_the_matching_replaced_memory_first(session, seeded):
+    _, by_key = seeded
+
+    found = await keys_for(
+        session, seeded, by_key["home-city-old"].content, mode="vector", history=True
+    )
+
+    assert found[0] == "home-city-old"
+
+
+async def test_history_follows_the_clock(session, seeded):
+    by_id, _ = seeded
+    before = datetime(2026, 3, 1, tzinfo=UTC)
+
+    found = await search(
+        session,
+        "dentist appointment 3 March",
+        now=before,
+        mode="keyword",
+        history=True,
+        limit=60,
+    )
+
+    # Before 3 March 2026 the appointment had not happened yet
+    assert "dentist-past" not in [by_id[r.memory_id] for r in found]
+
+
+@pytest.mark.parametrize("flag", ["include_inactive", "include_ended"])
+async def test_history_cannot_be_combined_with_the_control_flags(session, flag):
+    with pytest.raises(ValueError, match="cannot be combined"):
+        await search(session, "q", now=NOW, mode="keyword", history=True, **{flag: True})
