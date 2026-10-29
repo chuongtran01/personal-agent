@@ -19,7 +19,7 @@ The new problem is memory. A support agent forgets everything between chats, and
 
 **Non-goals**
 
-- More than one user, sharing, or multi-tenant hardening. One owner, one set of credentials.
+- More than one user, sharing, or multi-tenant hardening, until the optional last phase (11). Phases 1 to 10 are built for one owner and one set of credentials.
 - Acting without the owner's confirmation on anything that sends, deletes or spends.
 - Voice, mobile apps or other channels. One chat surface.
 - Training or fine-tuning models, or a vector database service of its own. Memory lives in Postgres.
@@ -154,7 +154,7 @@ The model answers differently each time, so each dev run is repeated three times
 
 ## Development roadmap
 
-Ten phases, each ending in a gate that must pass before the next starts. Docs for a phase are written before its code.
+Eleven phases, each ending in a gate that must pass before the next starts. Docs for a phase are written before its code.
 
 | # | Phase | Deliverables | Gate |
 | --- | --- | --- | --- |
@@ -168,6 +168,7 @@ Ten phases, each ending in a gate that must pass before the next starts. Docs fo
 | 8 | Chat compaction | A stored summary replaces old messages in the prompt once the token budget is passed; originals kept; pending confirmations and tool output kept intact or labelled as data | Compaction evals keep early facts and instructions, never drop a pending confirmation, and cut prompt tokens |
 | 9 | Evals, tracing and polish | Full evals, the memory ablation, Langfuse, README, demo | Numbers in the README |
 | 10 | Terminal client | `app/cli.py`, `make chat`: login, streaming reply, memories used, `/memories`; a second client of the same API | The terminal client completes a chat against the running API |
+| 11 | Multi-user | Users table, `owner_id` on every table and query, signup and login per user, per-user Google connections and MCP tokens, cross-user leak evals | A user's memory, chats and tool results never reach another user's prompt, API response or tool call |
 
 ## Risks and open decisions
 

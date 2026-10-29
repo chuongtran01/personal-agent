@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     recency_weight: float = 0.0005
     recency_half_life_days: float = 365
 
+    # Owner login: one password, kept as an argon2 hash (`python -m app.auth hash`), and a secret
+    # that signs the tokens. With either unset, login is closed (docs/PHASE3.md)
+    owner_password_hash: str = ""
+    jwt_secret: str = ""
+    token_ttl_minutes: int = 720
+
     # Tracing to Langfuse. Both keys empty means no tracing. The base URL is the one for your
     # project's region; empty uses the SDK's default
     langfuse_public_key: str = ""

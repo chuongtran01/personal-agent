@@ -14,7 +14,7 @@ The evals are the spec again: the agent eval cases are written before the loop t
 ## Deliverables
 
 - [x] **Agent eval cases**: `evals/datasets/agent.dev.jsonl` and `agent.test.jsonl`, with the schema and loader in `evals/agent_cases.py`. One owner message (optionally preceded by earlier turns in the same session), the memories that must and must not be recalled, and the words the answer must and must not contain, built from `data/memory_traps.yaml` probes and the seed memories
-- [ ] **Owner login**: `backend/app/auth.py` (password check, signed tokens) and `POST /auth/login`, with the `current_owner` dependency in `api/deps.py`. One owner, no users table
+- [x] **Owner login**: `backend/app/auth.py` (password check, signed tokens) and `POST /auth/login`, with the `current_owner` dependency in `api/deps.py`. One owner, no users table
 - [ ] **Model interface**: `backend/app/agent/llm.py` (the `LLMClient` protocol and its events, with no provider import), `openai_client.py` (the OpenAI implementation) and `backend/tests/scripted_llm.py` (a scripted fake for tests)
 - [ ] **Recall**: `backend/app/memory/recall.py`. Builds the query from the conversation, calls `search()` with the clock (twice for a past-tense question, the second time in history mode), returns the memories to show, and marks them used
 - [ ] **Prompt**: `backend/app/agent/prompt.py`. The system prompt, rebuilt every turn with the date and the recalled memories as labelled data
@@ -99,14 +99,14 @@ Every endpoint but login and health needs the token. The memory list is read-onl
 
 ## Owner login
 
-One owner, so there is no users table and no owner column on sessions. The password is checked against `OWNER_PASSWORD_HASH` (an argon2 hash; `python -m app.auth hash` prints one for `.env`). A correct password returns a signed token that expires after `TOKEN_TTL_MINUTES`; the signing key is `JWT_SECRET`, and the server refuses to start on the default one when it listens on anything but this machine. A wrong password is `401` with the same body whether or not a hash is set, and there is no way to ask which.
+One owner, so there is no users table and no owner column on sessions. The password is checked against `OWNER_PASSWORD_HASH` (an argon2 hash; `python -m app.auth hash` prints one for `.env`). A correct password returns `{access_token, token_type: "bearer", expires_in}`: an HS256 token that says "owner" and expires after `TOKEN_TTL_MINUTES` (720 by default). The signing key is `JWT_SECRET` (`python -m app.auth secret` makes one), at least 32 characters, and there is no default: with no usable secret, login answers `503` and every protected endpoint answers `401`, so a forgotten setting closes the API and never opens it. A wrong password is `401` with the same body whether or not a hash is set, and the check costs the same either way, so there is no way to ask which. The hash goes in `.env` inside single quotes, because it holds `$` signs and Docker Compose reads that file too. There is no limit on login attempts yet; argon2 makes each guess slow, and this is a single-owner app run on one machine.
 
 ## Trying it without a UI
 
 There is no chat surface yet, so the agent is tried through the API:
 
 ```sh
-TOKEN=$(curl -s localhost:8000/auth/login -d '{"password":"..."}' -H 'content-type: application/json' | jq -r .token)
+TOKEN=$(curl -s localhost:8000/auth/login -d '{"password":"..."}' -H 'content-type: application/json' | jq -r .access_token)
 SID=$(curl -s -X POST localhost:8000/sessions -H "authorization: Bearer $TOKEN" | jq -r .id)
 curl -N localhost:8000/sessions/$SID/messages -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' -d '{"content":"What do I usually order for lunch?"}'
@@ -142,7 +142,7 @@ make eval-agent                    # dev split, needs OPENAI_API_KEY
 | Decision | Default if you say nothing |
 | --- | --- |
 | Chat surface | None in this phase: the API is exercised by tests, the eval runner and curl. Web app in phase 4, terminal client in phase 10 |
-| Owner authentication | One password, stored as an argon2 hash in `.env`, signed token |
+| Owner authentication | One password, stored as an argon2 hash in `.env`, signed token; no default secret, so a missing setting closes the API |
 | Model API | OpenAI Responses API with `store=False`, model from `AGENT_MODEL`, behind the `LLMClient` interface |
 | Search mode and size | `vector`, top 5, no score cutoff; revisit with the agent eval |
 | Where memories go in the prompt | The system prompt, rebuilt every turn and never stored |
