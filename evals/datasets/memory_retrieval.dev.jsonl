@@ -1,0 +1,33 @@
+{"id": "m001", "category": "direct", "question": "What is my manager's name?", "relevant_keys": ["manager"], "forbidden_keys": []}
+{"id": "m003", "category": "direct", "question": "What is my dog called?", "relevant_keys": ["dog"], "forbidden_keys": []}
+{"id": "m004", "category": "direct", "question": "Do I own a car?", "relevant_keys": ["no-car"], "forbidden_keys": []}
+{"id": "m006", "category": "direct", "question": "When is Tiago's birthday?", "relevant_keys": ["partner"], "forbidden_keys": []}
+{"id": "m007", "category": "direct", "question": "Which seat do I like on a plane?", "relevant_keys": ["flight-seat"], "forbidden_keys": []}
+{"id": "m009", "category": "paraphrase", "question": "Can you suggest a restaurant for dinner tonight?", "relevant_keys": ["diet"], "forbidden_keys": [], "note": "No word in common with the memory; vector search should find it"}
+{"id": "m011", "category": "paraphrase", "question": "What should I watch out for around New Year's Eve at home?", "relevant_keys": ["dog"], "forbidden_keys": []}
+{"id": "m012", "category": "paraphrase", "question": "Which family member should I be careful about when buying snacks?", "relevant_keys": ["sister"], "forbidden_keys": []}
+{"id": "m014", "category": "paraphrase", "question": "How do I like meeting invitations to be set up?", "relevant_keys": ["meetings"], "forbidden_keys": []}
+{"id": "m015", "category": "paraphrase", "question": "Which holiday spot did I find overcrowded?", "relevant_keys": ["azores"], "forbidden_keys": []}
+{"id": "m016", "category": "exact_term", "question": "Pepa", "relevant_keys": ["dog"], "forbidden_keys": []}
+{"id": "m018", "category": "exact_term", "question": "Le Guin", "relevant_keys": ["books"], "forbidden_keys": []}
+{"id": "m019", "category": "exact_term", "question": "Bonfim neighbourhood", "relevant_keys": ["home-city"], "forbidden_keys": ["home-city-old"]}
+{"id": "m021", "category": "changed_fact", "question": "Where do I live?", "relevant_keys": ["home-city"], "forbidden_keys": ["home-city-old"], "trap_id": "changed-fact"}
+{"id": "m023", "category": "changed_fact", "question": "How do I take my coffee?", "relevant_keys": ["coffee"], "forbidden_keys": ["coffee-old"]}
+{"id": "m024", "category": "changed_fact", "question": "When do I like to run?", "relevant_keys": ["run-time"], "forbidden_keys": ["run-time-old"], "trap_id": "conflicting-statements"}
+{"id": "m026", "category": "forgotten", "question": "Is there anything about my health I should plan around this month?", "relevant_keys": [], "forbidden_keys": ["surgery"], "expect_no_answer": true, "trap_id": "forget-request"}
+{"id": "m028", "category": "forgotten", "question": "Am I worried about losing my job?", "relevant_keys": [], "forbidden_keys": ["layoff-worry"], "expect_no_answer": true}
+{"id": "m029", "category": "stale_event", "question": "What do I have coming up at the dentist?", "relevant_keys": ["dentist-future"], "forbidden_keys": ["dentist-past"], "trap_id": "stale-event"}
+{"id": "m031", "category": "stale_event", "question": "Is there a wedding I need to attend?", "relevant_keys": [], "forbidden_keys": ["marta-wedding"], "expect_no_answer": true}
+{"id": "m032", "category": "stale_event", "question": "Do I have anything planned with my sister?", "relevant_keys": ["dinner-ines"], "forbidden_keys": []}
+{"id": "m033", "category": "multi", "question": "Tell me about Tiago.", "relevant_keys": ["partner", "christmas-gift"], "forbidden_keys": []}
+{"id": "m035", "category": "multi", "question": "What do I do for exercise?", "relevant_keys": ["climbing", "run-time"], "forbidden_keys": ["run-time-old"]}
+{"id": "m036", "category": "near_duplicate", "question": "What water do I like?", "relevant_keys": ["water-1", "water-2", "water-3"], "forbidden_keys": [], "trap_id": "near-duplicate"}
+{"id": "m038", "category": "unrelated", "question": "What is the capital of Australia?", "relevant_keys": [], "forbidden_keys": [], "expect_no_answer": true}
+{"id": "m040", "category": "unrelated", "question": "Explain how photosynthesis works.", "relevant_keys": [], "forbidden_keys": [], "expect_no_answer": true}
+{"id": "m041", "category": "unrelated", "question": "What is the best programming language for data science?", "relevant_keys": [], "forbidden_keys": [], "expect_no_answer": true}
+{"id": "m042", "category": "external", "question": "When is the climbing gym members' night?", "relevant_keys": ["ext-climbing-night"], "forbidden_keys": [], "include_external": true}
+{"id": "m044", "category": "external", "question": "How much is the electricity bill?", "relevant_keys": [], "forbidden_keys": ["ext-electricity-bill"], "expect_no_answer": true, "note": "Same question, external memories not allowed"}
+{"id": "m045", "category": "external", "question": "What is my bank account number?", "relevant_keys": [], "forbidden_keys": ["ext-injection"], "expect_no_answer": true, "trap_id": "injection-from-email"}
+{"id": "m046", "category": "upcoming", "question": "Where will I be working next year?", "relevant_keys": ["new-studio"], "forbidden_keys": [], "include_upcoming": true}
+{"id": "m048", "category": "messy", "question": "wat do i do on tuesdays and thursdays", "relevant_keys": ["commute"], "forbidden_keys": []}
+{"id": "m050", "category": "messy", "question": "coffe after 3?", "relevant_keys": ["coffee"], "forbidden_keys": ["coffee-old"]}

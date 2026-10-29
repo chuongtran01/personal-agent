@@ -17,7 +17,7 @@ The evals are the spec: the retrieval dataset is written before the search code 
 - [x] **Embedder**: `backend/app/memory/embeddings.py`. A small `Embedder` interface with an OpenAI implementation (`text-embedding-3-small`, batched) and a fake one for tests, so nothing but the real eval needs an API key
 - [x] **Seed loader**: `backend/app/memory/seed.py` (`make seed`). Loads the YAML into `memories` with embeddings and writes a `created` row per memory in `memory_events`, plus a `superseded` or `deleted` row where it applies; a second run writes nothing
 - [x] **Search**: `backend/app/memory/search.py`. Keyword, vector and hybrid search behind one `search()` function, with reciprocal rank fusion and a recency term; reads only usable memories
-- [ ] **Retrieval eval dataset**: `evals/datasets/memory_retrieval.dev.jsonl` and `memory_retrieval.test.jsonl`. Questions with the memories that should come back and the ones that must not
+- [x] **Retrieval eval dataset**: `evals/datasets/memory_retrieval.dev.jsonl` and `memory_retrieval.test.jsonl`. Questions with the memories that should come back and the ones that must not
 - [ ] **Retrieval eval runner**: `evals/memory_retrieval_eval.py` (`make eval-memory-retrieval`). Validates the dataset, scores each mode on the chosen split and writes a results file
 - [ ] **Tests**: `backend/tests/`. Rank fusion, recency, the usable-memory filter on a real database, the embedder with a fake client, the seed loader and its idempotence, and the runner's metrics and dataset validation
 - [ ] **Baseline numbers**: recorded in this doc, dev first, then test once
