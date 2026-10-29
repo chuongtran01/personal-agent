@@ -16,6 +16,9 @@ mode's top 10. A run with a leak exits with status 1.
 ``--control`` is the negative control for that gate: it lifts every filter and reports how many
 forbidden memories then come back. If a question's forbidden memory never does, the question is
 not a real test of the filter. The control reports and does not gate.
+
+``--sweep`` tunes the recency settings: it runs hybrid with recency over a small grid of weights
+and half-lives and picks one by a fixed rule (``pick_setting``). It only reads the dev split.
 """
 
 import argparse
@@ -50,6 +53,9 @@ MODES: tuple[str, ...] = get_args(Mode)
 RECALL_K = 5
 DEPTH = 10  # results retrieved per question; recall uses the first RECALL_K, MRR all of them
 EVAL_DATABASE = "agent_eval"
+# The recency sweep grid. Weight 0 is plain hybrid, so the half-life does not matter there
+SWEEP_WEIGHTS = (0.0, 0.0005, 0.001, 0.002, 0.005)
+SWEEP_HALF_LIVES = (30.0, 90.0, 365.0)
 
 
 class EvalError(RuntimeError):
@@ -155,6 +161,8 @@ async def run(
     seed_memories: dict[str, SeedMemory],
     ids: dict[str, int],
     control: bool = False,
+    recency_weight: float | None = None,
+    recency_half_life_days: float | None = None,
 ) -> dict[str, list[CaseOutcome]]:
     key_of = {memory_id: key for key, memory_id in ids.items()}
     outcomes: dict[str, list[CaseOutcome]] = {}
@@ -172,10 +180,64 @@ async def run(
                 include_upcoming=case.include_upcoming or control,
                 include_inactive=control,
                 include_ended=control,
+                recency_weight=recency_weight,
+                recency_half_life_days=recency_half_life_days,
             )
             ranked = [(key_of[r.memory_id], r.score) for r in found]
             outcomes[mode].append(evaluate_case(case, seed_memories, ranked))
     return outcomes
+
+
+def pick_setting(results: list[dict]) -> dict:
+    """The recency setting to keep, chosen by a rule fixed before the sweep was run.
+
+    Among the settings whose recall@5 is not below plain hybrid's (weight 0), take the highest
+    MRR. Ties go to the smaller weight, then the longer half-life (the gentler setting). If that
+    is weight 0, recency does not help on this data.
+    """
+    baseline = next(r for r in results if r["weight"] == 0)
+    eligible = [r for r in results if r[f"recall@{RECALL_K}"] >= baseline[f"recall@{RECALL_K}"]]
+    return min(eligible, key=lambda r: (-r["mrr"], r["weight"], -r["half_life"]))
+
+
+async def run_sweep(
+    session: AsyncSession,
+    cases: list[RetrievalCase],
+    embedder,
+    seed_memories: dict[str, SeedMemory],
+    ids: dict[str, int],
+) -> list[dict]:
+    results = []
+    for weight in SWEEP_WEIGHTS:
+        for half_life in SWEEP_HALF_LIVES[:1] if weight == 0 else SWEEP_HALF_LIVES:
+            outcomes = await run(
+                session,
+                cases,
+                ["hybrid_recency"],
+                embedder,
+                seed_memories,
+                ids,
+                recency_weight=weight,
+                recency_half_life_days=half_life,
+            )
+            answerable = [o for o in outcomes["hybrid_recency"] if not o.expect_no_answer]
+            results.append({"weight": weight, "half_life": half_life, **_quality(answerable)})
+    return results
+
+
+def report_sweep(results: list[dict], chosen: dict) -> None:
+    print(f"\n{'weight':>8} {'half-life':>10} {'recall@5':>9} {'MRR':>7} {'all@5':>7}")
+    for r in results:
+        mark = "  <- chosen" if r is chosen else ""
+        label = "(hybrid)" if r["weight"] == 0 else f"{r['half_life']:.0f}"
+        print(
+            f"{r['weight']:>8} {label:>10} {r[f'recall@{RECALL_K}']:>9.3f} {r['mrr']:>7.3f} "
+            f"{r[f'all@{RECALL_K}']:>7.3f}{mark}"
+        )
+    if chosen["weight"] == 0:
+        print("\nrecency does not help on dev: keep the weight at 0")
+    else:
+        print(f"\nkeep weight {chosen['weight']} and half-life {chosen['half_life']:.0f} days")
 
 
 class CachedEmbedder:
@@ -275,7 +337,20 @@ def report_control(
     return 0
 
 
-async def main(split: str, modes: list[str], control: bool = False) -> int:
+async def sweep_report(split: str, results: list[dict]) -> int:
+    chosen = pick_setting(results)
+    report_sweep(results, chosen)
+    RESULTS.mkdir(exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = RESULTS / f"memory-retrieval-sweep-{split}-{stamp}.json"
+    path.write_text(json.dumps({"split": split, "results": results, "chosen": chosen}, indent=2))
+    print(f"\nwrote {path.relative_to(ROOT.parent)}")
+    return 0
+
+
+async def main(split: str, modes: list[str], control: bool = False, sweep: bool = False) -> int:
+    if sweep and split != "dev":
+        raise EvalError("the sweep tunes on dev and never reads the test split")
     cases = load_all()[split]
     seed_memories = load_seed()
     print(f"{split} split: {len(cases)} questions, modes: {', '.join(modes)}")
@@ -287,6 +362,13 @@ async def main(split: str, modes: list[str], control: bool = False) -> int:
         async with async_sessionmaker(engine, expire_on_commit=False)() as session:
             await reset(session)
             ids = await seed(session, embedder, seed_memories)
+            if sweep:
+                return await sweep_report(
+                    split,
+                    await run_sweep(
+                        session, cases, embedder, {m.key: m for m in seed_memories}, ids
+                    ),
+                )
             outcomes = await run(
                 session, cases, modes, embedder, {m.key: m for m in seed_memories}, ids, control
             )
@@ -328,8 +410,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--control", action="store_true", help="lift every filter and report what comes back"
     )
+    parser.add_argument("--sweep", action="store_true", help="tune the recency settings on dev")
     arguments = parser.parse_args()
     try:
-        sys.exit(asyncio.run(main(arguments.split, arguments.modes, arguments.control)))
+        sys.exit(
+            asyncio.run(main(arguments.split, arguments.modes, arguments.control, arguments.sweep))
+        )
     except (EvalError, InvalidDataset) as error:
         sys.exit(f"error: {error}")

@@ -144,3 +144,53 @@ async def test_the_control_gets_the_forbidden_memories_back_when_the_filters_are
 
     assert runner.summarize_control(traps, filtered["keyword"])["forbidden_returned"] == 0
     assert runner.summarize_control(traps, lifted["keyword"])["forbidden_returned"] >= 1
+
+
+def setting(weight, half_life, recall, mrr):
+    return {"weight": weight, "half_life": half_life, "recall@5": recall, "mrr": mrr}
+
+
+def test_the_sweep_keeps_the_best_mrr_among_settings_that_do_not_lose_recall():
+    results = [
+        setting(0.0, 30.0, 0.96, 0.88),
+        setting(0.001, 90.0, 0.96, 0.91),
+        setting(0.002, 90.0, 0.92, 0.95),  # best MRR, but it loses recall
+        setting(0.005, 90.0, 0.96, 0.80),
+    ]
+
+    assert runner.pick_setting(results) == results[1]
+
+
+def test_the_sweep_ties_go_to_the_smaller_weight_then_the_longer_half_life():
+    results = [
+        setting(0.0, 30.0, 0.96, 0.88),
+        setting(0.002, 30.0, 0.96, 0.90),
+        setting(0.001, 30.0, 0.96, 0.90),
+        setting(0.001, 365.0, 0.96, 0.90),
+    ]
+
+    assert runner.pick_setting(results) == results[3]
+
+
+def test_the_sweep_keeps_weight_zero_when_recency_does_not_help():
+    results = [setting(0.0, 30.0, 0.96, 0.88), setting(0.001, 90.0, 0.92, 0.95)]
+
+    assert runner.pick_setting(results)["weight"] == 0
+
+
+async def test_the_sweep_refuses_the_test_split():
+    with pytest.raises(runner.EvalError, match="never reads the test split"):
+        await runner.main("test", ["hybrid_recency"], sweep=True)
+
+
+async def test_the_sweep_runs_every_setting_once_with_plain_hybrid_first(session):
+    memories = load_seed()
+    embedder = FakeEmbedder()
+    ids = await seed(session, embedder, memories)
+    cases = [c for c in load_all()["dev"] if c.category == "direct"]
+
+    results = await runner.run_sweep(session, cases, embedder, {m.key: m for m in memories}, ids)
+
+    assert len(results) == 1 + (len(runner.SWEEP_WEIGHTS) - 1) * len(runner.SWEEP_HALF_LIVES)
+    assert results[0]["weight"] == 0
+    assert all(r["questions"] == len(cases) for r in results)
