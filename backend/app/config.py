@@ -1,5 +1,7 @@
 from typing import Literal
+from zoneinfo import ZoneInfo
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +27,10 @@ class Settings(BaseSettings):
     recall_limit: int = 5
     recall_history_limit: int = 3
 
+    # Who the agent talks to: the name is optional, the time zone decides what "today" is
+    owner_name: str = ""
+    owner_timezone: str = "UTC"
+
     # Owner login: one password, kept as an argon2 hash (`python -m app.auth hash`), and a secret
     # that signs the tokens. With either unset, login is closed (docs/PHASE3.md)
     owner_password_hash: str = ""
@@ -36,6 +42,18 @@ class Settings(BaseSettings):
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_base_url: str = ""
+
+    @field_validator("owner_timezone")
+    @classmethod
+    def _known_time_zone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (
+            ValueError,
+            KeyError,
+        ) as error:  # a typo fails at start-up, not on the first message
+            raise ValueError(f"unknown time zone {value!r}") from error
+        return value
 
 
 settings = Settings()

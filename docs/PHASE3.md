@@ -17,7 +17,7 @@ The evals are the spec again: the agent eval cases are written before the loop t
 - [x] **Owner login**: `backend/app/auth.py` (password check, signed tokens) and `POST /auth/login`, with the `current_owner` dependency in `api/deps.py`. One owner, no users table
 - [x] **Model interface**: `backend/app/agent/messages.py` (the stored message shapes), `backend/app/agent/llm.py` (the `LLMClient` protocol and its events, with no provider import), `openai_client.py` (the OpenAI implementation) and `backend/tests/scripted_llm.py` (a scripted fake for tests)
 - [x] **Recall**: `backend/app/memory/recall.py`, plus a `history` mode in `search()`. Builds the query from the conversation, calls `search()` with the clock (twice for a past-tense question, the second time in history mode) and returns the current and past memories to show. It writes nothing; `mark_used` in the same file sets `last_used_at`, and the loop calls it for what went into the prompt
-- [ ] **Prompt**: `backend/app/agent/prompt.py`. The system prompt, rebuilt every turn with the date and the recalled memories as labelled data
+- [x] **Prompt**: `backend/app/agent/prompt.py`. The system prompt, rebuilt every turn with the date and the recalled memories as labelled data
 - [ ] **Agent loop**: `backend/app/agent/loop.py`. One owner message in, a stream of events out; recalls (with a history pass when the message asks about the past), calls the model, stores every message, stops at a step limit
 - [ ] **API**: `backend/app/api/`. Sessions, the streaming message endpoint, and a read-only memory list
 - [ ] **Agent eval runner**: `evals/agent_eval.py` and the pure checks in `evals/agent_checks.py` (`make eval-agent`). Runs each case through the real loop on freshly seeded memories, with `--memory on|off`, and reports pass rates, latency and tokens
@@ -53,9 +53,9 @@ Memory is for the gap between sessions. Within a session the model already has t
 
 ## Prompt
 
-`prompt.py` builds the system prompt per turn from the date, the owner's name and the recalled memories. It is not stored: it is added on every call, so a change applies to old sessions too, and a stored conversation never contains a memory block that could go stale.
+`prompt.py` builds the system prompt per turn from today's date in the owner's time zone (`OWNER_TIMEZONE`, checked when the settings load), the owner's name if `OWNER_NAME` is set, and the recalled memories. A memory is flattened to one line, its angle brackets are escaped and it is cut at 500 characters, so a stored sentence cannot close the block it sits in or pose as an instruction. With nothing recalled the prompt says so, which is what lets the model answer "I don't know". It is not stored: it is added on every call, so a change applies to old sessions too, and a stored conversation never contains a memory block that could go stale.
 
-Memories are rendered as a labelled block of data, one per line, each with its kind, its date and where it came from (`you said`, or `from an email` for an `external` one; external memories are not recalled by default, but the label exists for phase 5). The prompt says:
+Memories are rendered as a labelled block of data, one per line, each with its kind, the month it was told and where it came from (`owner said`, or `from an email or event, not the owner` for an `external` one; external memories are not recalled by default, but the label exists for phase 5). The prompt says:
 
 - Replaced and ended memories sit in a separate block headed *no longer true or already happened*. Use them only to answer a question about the past, and say they are past ("you used to live in Lisbon"); never offer one as current or upcoming.
 - Use a memory only if it bears on the question; do not list memories the owner did not ask about.
