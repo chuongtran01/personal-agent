@@ -38,4 +38,7 @@ if touches_frontend && have_frontend_deps; then
   echo "frontend"
   run "type check" sh -c "cd frontend && npm run --silent typecheck"
   run "tests" sh -c "cd frontend && npm test --silent"
+  # Some mistakes pass the type check, the linter and every test and only fail in the build (a
+  # component that uses hooks but lost its "use client", say), so the push also builds
+  run "production build" sh -c "cd frontend && npm run --silent build"
 fi

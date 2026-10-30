@@ -22,8 +22,24 @@ export function safeNext(next: string | null | undefined): string {
   return isLogin(path) ? FALLBACK : path;
 }
 
-/** The login page, told where to come back to. The home page and the login page itself need no memory. */
-export function loginUrl(from: string): string {
+/** The marker a refused token leaves in the login address, so the page can say why the owner is there. */
+export const EXPIRED = "expired";
+
+/** Whether the login address says the owner's session ended. Only the one known word counts. */
+export function sessionEnded(search: string): boolean {
+  return new URLSearchParams(search).get("reason") === EXPIRED;
+}
+
+/**
+ * The login page, told where to come back to. The home page and the login page itself need no
+ * memory. `expired` is for a token the server refused: someone who never signed in has no session to
+ * say ended.
+ */
+export function loginUrl(from: string, { expired = false }: { expired?: boolean } = {}): string {
   const target = safeNext(from);
-  return target === FALLBACK ? "/login" : `/login?next=${encodeURIComponent(target)}`;
+  const query = new URLSearchParams();
+  if (target !== FALLBACK) query.set("next", target);
+  if (expired) query.set("reason", EXPIRED);
+  const text = query.toString();
+  return text ? `/login?${text}` : "/login";
 }

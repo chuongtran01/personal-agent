@@ -81,3 +81,16 @@ describe("RecalledMemories", () => {
     expect(screen.queryByText("was true")).not.toBeInTheDocument();
   });
 });
+
+describe("a memory's text is only ever text", () => {
+  // Memory text can come from an email, so it must not become formatting, a link or an image
+  const hostile = "**bold** [click](https://evil.example) ![pixel](https://evil.example/p.png) <img src=x onerror=alert(1)> <script>alert(2)</script>";
+
+  test("is shown as written, not rendered as Markdown or HTML", async () => {
+    const { container } = render(<RecalledMemories memories={[memory({ content: hostile })]} />);
+    await userEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByText(hostile)).toBeInTheDocument();
+    expect(container.querySelector("strong, a, img, script")).toBeNull();
+  });
+});

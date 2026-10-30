@@ -19,9 +19,9 @@ Nothing here writes memories. The memory list is read-only; editing and deleting
 - [x] **Login**: the password form, the token kept for the tab, and the way back to login when the token is missing or refused
 - [x] **Chats**: the chat list, a new chat and the streaming chat view, with the recalled memories under each reply
 - [x] **Memory list**: read-only, by status, with the dates, the source and what replaced what
-- [ ] **Errors and limits**: every refusal and failure the API can give has a plain message and a way forward
-- [ ] **Tests**: `frontend/src/**/*.test.tsx` and the backend tests for the stored ids. None needs an API key or a running server
-- [ ] **Hooks and docs**: the pre-commit and pre-push hooks check the frontend when it changed, and the README says how to run both halves
+- [x] **Errors and limits**: every refusal and failure the API can give has a plain message and a way forward
+- [x] **Tests**: `frontend/src/**/*.test.tsx` and the backend tests for the stored ids. None needs an API key or a running server
+- [x] **Hooks and docs**: the pre-commit and pre-push hooks check the frontend when it changed, and the README says how to run both halves
 - [ ] **Browser check**: the gate scenario run by hand against the real API, with the results recorded in this doc
 
 ## Architecture
@@ -135,7 +135,7 @@ Because the answer is model output built from stored text, it is treated as untr
 | --- | --- |
 | Wrong password (`401`) | "That password is not right", the field kept |
 | Login not configured (`503`) | "Login is not available: the server is not set up" |
-| Token refused or expired (`401`) | Back to login, then back to where they were |
+| Token refused (`401`) | Back to login with "Your session has ended. Please log in again.", then back to where they were. A visitor who never signed in is sent to login with no such message |
 | `empty_message`, `message_too_long` | Prevented in the composer; if the server refuses anyway, its message |
 | `chat_full` (409) | "This chat is full. Start a new one", with a button |
 | `turn_in_progress` (409) | "Still answering the last message", then one reload of the history |
@@ -153,13 +153,13 @@ The frontend tests run in Vitest with Testing Library and a fake `fetch` that re
 
 - **Reader:** a frame split across chunks, a split multi-byte character, `\r\n`, comments, an unknown event, a final frame without its blank line, a stream that ends without `done`.
 - **Client:** the token is sent, a `401` signs out, an error body becomes its code, a network failure becomes a message.
-- **Guard and redirects:** a visitor without a token, or with an expired one, sees nothing and is sent to login with a `next` that includes the query; a reload (which hydrates server HTML) sends a signed-in owner nowhere and a visitor to login once; a token refused later does the same from wherever the owner is; the handler is removed when the page goes; `safeNext` is tested against the addresses above, and what `loginUrl` writes, `safeNext` reads back.
+- **Guard and redirects:** a visitor without a token, or with an expired one, sees nothing and is sent to login with a `next` that includes the query; a reload (which hydrates server HTML) sends a signed-in owner nowhere and a visitor to login once; a token refused later does the same from wherever the owner is, and the login page says the session ended (only for that, and only for the one marker it sets); the handler is removed when the page goes; `safeNext` is tested against the addresses above, and what `loginUrl` writes, `safeNext` reads back.
 - **The store and the chat view:** the question appears at once, then the memories, then the reply as it streams; `done` makes it a message with the stored id and its memories; an error drops the half reply and keeps the question; a refused message leaves the chat as it was and keeps the text in the box; one reply at a time; a reply keeps arriving with nobody watching; a history read does not wipe a newer message; the busy-chat reload happens once; the view follows the reply only while the owner is at the bottom; a missing chat goes home; signing out empties it all.
 - **Views** (queried by role and label, never by class name; Radix needs `ResizeObserver`, pointer capture and `scrollIntoView` stubbed once in the test setup under jsdom): login (right and wrong password, `503`, return to the page asked for); the chat view (the memory list appears before the text, text is appended, `done` attaches the stored id, an `error` event shows its message, `409` and `413` are mapped, Enter and Shift+Enter, the composer is locked during a reply, the counter and the limit); a new chat is created on the first send and not before; the chat list; the memory list (a status tab asks for that status, load more, the filter, no edit controls).
-- **Safety:** a `<script>` in a reply is shown as text, a `javascript:` link is not a link, a memory's text is not rendered as Markdown.
+- **Safety:** a `<script>` in a reply is shown as text, a `javascript:` link is not a link, an image in a reply is not loaded, and neither a memory's text (in a reply's list or in the memory list) nor the owner's own message is rendered as Markdown or HTML.
 - **Backend** (`pytest`, no key): the ids are stored on the reply that ends a turn and on no other, old rows without them still load, the provider input does not contain them, `GET /sessions/{id}/messages` returns them resolved, a deleted memory comes back without its text, a replaced one with it, and a user message has an empty list.
 
-The hooks run the type check, the linter and the tests when `frontend/` changed and `node_modules` is present, and say so when it is not.
+The hooks run the type check and the linter before a commit, and the type check, the tests and the production build before a push, when `frontend/` changed and `node_modules` is present, and say so when it is not. The build is there because some mistakes pass everything else: a component that uses hooks but lost its `"use client"` fails only in `next build`.
 
 ## Run it
 

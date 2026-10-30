@@ -354,3 +354,16 @@ describe("a failure to load", () => {
     expect(screen.getByText("Memory number 1.")).toBeVisible();
   });
 });
+
+describe("a memory's text is only ever text", () => {
+  const hostile = "**bold** [click](https://evil.example) ![pixel](https://evil.example/p.png) <img src=x onerror=alert(1)> <script>alert(2)</script>";
+
+  test("in the list too: no formatting, no link, no image, no script", async () => {
+    serve({ "active:0": [memory(1, { content: hostile, source_kind: "external" })] });
+    const { container } = render(<MemoryList />);
+
+    expect(await screen.findByText(hostile)).toBeInTheDocument();
+
+    expect(container.querySelector("li strong, li a, li img, li script")).toBeNull();
+  });
+});

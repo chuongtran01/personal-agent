@@ -1,11 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 
 import { login } from "@/api/auth";
 import { ApiError } from "@/api/http";
-import { safeNext } from "@/auth/redirect";
+import { safeNext, sessionEnded } from "@/auth/redirect";
 import { getToken } from "@/auth/token";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { messageFor } from "@/lib/messages";
+
+const noSubscription = () => () => {};
 
 const where = () => safeNext(new URLSearchParams(window.location.search).get("next"));
 
@@ -22,6 +24,9 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A token the server refused sends the owner here with a marker; it says why they are back. The
+  // address is only known in the browser, so the server and the first render say "not ended"
+  const ended = useSyncExternalStore(noSubscription, () => sessionEnded(window.location.search), () => false);
 
   // Someone who is already signed in has no use for the form
   useEffect(() => {
@@ -67,6 +72,11 @@ export function LoginForm() {
               aria-invalid={error ? true : undefined}
             />
           </div>
+          {ended && !error && (
+            <Alert>
+              <AlertDescription>{messageFor("unauthorized")}</AlertDescription>
+            </Alert>
+          )}
           {error && (
             <Alert variant="destructive">
               <AlertDescription>{error}</AlertDescription>

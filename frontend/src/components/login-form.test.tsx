@@ -179,6 +179,45 @@ test("while it waits for the server the button is locked and a second send does 
   await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/"));
 });
 
+describe("when the owner is sent here because the server refused their token", () => {
+  test("says the session ended, and still takes them back where they were afterwards", async () => {
+    page("/login?next=%2Fchats%2Fabc&reason=expired");
+    fetchMock.mockResolvedValue(reply(200, LOGGED_IN));
+    render(<LoginForm />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Your session has ended. Please log in again.");
+    await logIn();
+
+    await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/chats/abc"));
+  });
+
+  test("says nothing of the sort on an ordinary visit", () => {
+    page("/login");
+    render(<LoginForm />);
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test.each(["?reason=whatever", "?reason=EXPIRED", "?reason="])("ignores %s", (search) => {
+    page(`/login${search}`);
+    render(<LoginForm />);
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("gives way to the error when the password is then wrong", async () => {
+    page("/login?reason=expired");
+    fetchMock.mockResolvedValue(reply(401, { detail: "invalid credentials" }));
+    render(<LoginForm />);
+
+    await logIn("nope");
+
+    const alerts = await screen.findAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent("That password is not right.");
+  });
+});
+
 test("someone already signed in is sent on without the form doing anything", async () => {
   setToken("abc", 60);
   page("/login?next=%2Fmemories");

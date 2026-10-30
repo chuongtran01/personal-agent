@@ -42,7 +42,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     // A token refused later (expired, or the server was reset) sends the owner back the same way
     setUnauthorizedHandler(() => {
       resetStore();
-      router.replace(loginUrl(here()));
+      router.replace(loginUrl(here(), { expired: true }));
     });
     return () => setUnauthorizedHandler(null);
   }, [auth, router]);

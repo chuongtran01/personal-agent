@@ -6,6 +6,8 @@ const MESSAGES: Record<string, string> = {
   login_not_configured: "Login is not available: the server is not set up.",
   unauthorized: "Your session has ended. Please log in again.",
   network: "Cannot reach the server.",
+  bad_stream: "The reply could not be read.",
+  connection_lost: "The connection was lost. Reload to see whether the reply was saved.",
   // Sending a message (the server's refusals and the assistant being unavailable)
   chat_full: "This chat is full. Start a new one.",
   message_too_long: "That message is too long.",

@@ -13,6 +13,8 @@ test.each([
   "turn_in_progress",
   "session_not_found",
   "agent_not_configured",
+  "bad_stream",
+  "connection_lost",
 ])(
   "the code %s has a message of its own",
   (code) => {

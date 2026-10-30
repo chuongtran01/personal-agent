@@ -40,6 +40,15 @@ test("a visitor without a token sees nothing and is sent to login, to return her
   expect(nav.router.replace).toHaveBeenCalledWith("/login?next=%2Fmemories");
 });
 
+test("a visitor who never signed in is not told a session ended", () => {
+  page("/memories");
+
+  protectedPage();
+
+  expect(nav.router.replace).toHaveBeenCalledWith("/login?next=%2Fmemories");
+  expect(String(nav.router.replace.mock.calls[0][0])).not.toContain("reason");
+});
+
 test("from the home page the login address carries no next", () => {
   protectedPage();
 
@@ -82,7 +91,7 @@ test("a token refused later sends the owner to login from wherever they are", as
   await failure(request("/sessions"));
 
   expect(getToken()).toBeNull();
-  expect(nav.router.replace).toHaveBeenCalledWith("/login?next=%2Fchats%2Fx%3Fy%3D1");
+  expect(nav.router.replace).toHaveBeenCalledWith("/login?next=%2Fchats%2Fx%3Fy%3D1&reason=expired");
 });
 
 test("once the page is gone, a refused token no longer redirects", async () => {
@@ -158,6 +167,6 @@ describe("a reload, which hydrates what the server sent", () => {
 
     await failure(request("/sessions"));
 
-    expect(nav.router.replace).toHaveBeenCalledWith("/login?next=%2Fchats%2Fx");
+    expect(nav.router.replace).toHaveBeenCalledWith("/login?next=%2Fchats%2Fx&reason=expired");
   });
 });

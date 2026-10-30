@@ -66,7 +66,7 @@ make web                      # the web app on :3000 (forwards /api to the API)
 | `make web-test`, `make web-lint`, `make web-build` | Frontend tests, type check and ESLint, production build |
 | `make eval-memory-retrieval` | Retrieval eval: recall@5, MRR and leaks per search mode |
 | `make eval-agent ARGS="--memory both --repeat 3"` | Agent eval on the real loop, memory on and off (a few cents of API use) |
-| `make hooks` | Turn on the git hooks: checks before a commit, tests before a push |
+| `make hooks` | Turn on the git hooks: checks before a commit, tests and a production build before a push |
 
 ## Layout
 

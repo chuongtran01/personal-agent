@@ -39,6 +39,13 @@ describe("the conversation", () => {
     expect(log.querySelector("strong")).toHaveTextContent("Porto");
   });
 
+  test("shows the owner's own words as written: they are not Markdown", () => {
+    const { container } = view([message(1, "user", "**not bold** and <b>not html</b> [not a link](https://example.com)")]);
+
+    expect(screen.getByText("**not bold** and <b>not html</b> [not a link](https://example.com)")).toBeInTheDocument();
+    expect(container.querySelector("strong, b, a")).toBeNull();
+  });
+
   test("keeps the line breaks the owner typed", () => {
     view([message(1, "user", "line one\nline two")]);
 
