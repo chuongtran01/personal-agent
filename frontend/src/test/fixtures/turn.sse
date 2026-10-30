@@ -1,0 +1,30 @@
+event: memory
+data: {"current":[{"id":1,"kind":"fact","content":"The owner lives in Porto, in the Bonfim neighbourhood.","valid_from":null,"valid_until":null},{"id":12,"kind":"fact","content":"The owner does not own a car and rents one for trips outside the city.","valid_from":null,"valid_until":null},{"id":19,"kind":"fact","content":"The owner's time zone is Europe/Lisbon.","valid_from":null,"valid_until":null},{"id":6,"kind":"fact","content":"The owner's sister Inês lives in Faro and is allergic to nuts.","valid_from":null,"valid_until":null},{"id":33,"kind":"event","content":"Dentist check-up on 12 November 2026 at 09:30.","valid_from":null,"valid_until":"2026-11-12T10:30:00Z"}],"past":[]}
+
+event: text
+data: {"text":"You"}
+
+event: text
+data: {"text":" live"}
+
+event: text
+data: {"text":" in"}
+
+event: text
+data: {"text":" Bon"}
+
+event: text
+data: {"text":"fim"}
+
+event: text
+data: {"text":","}
+
+event: text
+data: {"text":" Porto"}
+
+event: text
+data: {"text":"."}
+
+event: done
+data: {"message_id":236,"input_tokens":456,"output_tokens":12,"steps":1,"recall_seconds":0.5193326671142131,"total_seconds":2.1971604998689145}
+

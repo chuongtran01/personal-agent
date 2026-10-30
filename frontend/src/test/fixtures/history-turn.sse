@@ -1,0 +1,36 @@
+event: memory
+data: {"current":[{"id":1,"kind":"fact","content":"The owner lives in Porto, in the Bonfim neighbourhood.","valid_from":null,"valid_until":null},{"id":12,"kind":"fact","content":"The owner does not own a car and rents one for trips outside the city.","valid_from":null,"valid_until":null},{"id":19,"kind":"fact","content":"The owner's time zone is Europe/Lisbon.","valid_from":null,"valid_until":null},{"id":15,"kind":"episode","content":"In September the owner started climbing twice a week at a local bouldering gym.","valid_from":null,"valid_until":null},{"id":42,"kind":"preference","content":"Still water only for the owner, never fizzy.","valid_from":null,"valid_until":null}],"past":[{"id":21,"kind":"fact","content":"The owner lives in Lisbon, in Alfama.","valid_from":null,"valid_until":null},{"id":24,"kind":"preference","content":"The owner prefers to run in the morning, before work.","valid_from":null,"valid_until":null},{"id":29,"kind":"event","content":"Dentist appointment on 3 March 2026 at 10:00.","valid_from":null,"valid_until":"2026-03-03T11:00:00Z"}]}
+
+event: text
+data: {"text":"You"}
+
+event: text
+data: {"text":" used"}
+
+event: text
+data: {"text":" to"}
+
+event: text
+data: {"text":" live"}
+
+event: text
+data: {"text":" in"}
+
+event: text
+data: {"text":" Alf"}
+
+event: text
+data: {"text":"ama"}
+
+event: text
+data: {"text":","}
+
+event: text
+data: {"text":" Lisbon"}
+
+event: text
+data: {"text":"."}
+
+event: done
+data: {"message_id":238,"input_tokens":548,"output_tokens":14,"steps":1,"recall_seconds":0.24727129214443266,"total_seconds":1.1982664170209318}
+

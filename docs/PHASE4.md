@@ -15,7 +15,7 @@ Nothing here writes memories. The memory list is read-only; editing and deleting
 
 - [x] **Recalled memories stored with the reply**: `backend/app/agent/messages.py`, `loop.py`, `store.py` and `api/sessions.py`. The reply that ends a turn carries the ids recalled for it, and `GET /sessions/{id}/messages` returns them resolved (kind, content, whether the memory is a past one, its status today). The model never sees these fields
 - [x] **Frontend scaffold**: `frontend/`. Next.js (App Router), React and TypeScript, Tailwind CSS and shadcn/ui (set up with its CLI, the components copied into `src/components/ui/`), a rewrite that forwards `/api` to the backend, ESLint and the type check, Vitest with Testing Library, and `make web`, `make web-test` and `make web-build`
-- [ ] **API client and event reader**: `frontend/src/api/`. A typed `fetch` wrapper that adds the token and turns errors into codes, and a reader that parses the `POST` stream into events. Built first, against a stream recorded from the real API
+- [x] **API client and event reader**: `frontend/src/api/`. A typed `fetch` wrapper that adds the token and turns errors into codes, and a reader that parses the `POST` stream into events. Built first, against a stream recorded from the real API
 - [ ] **Login**: the password form, the token kept for the tab, and the way back to login when the token is missing or refused
 - [ ] **Chats**: the chat list, a new chat and the streaming chat view, with the recalled memories under each reply
 - [ ] **Memory list**: read-only, by status, with the dates, the source and what replaced what
@@ -45,7 +45,8 @@ Layout:
 
 ```
 frontend/
-  src/api/         client.ts (fetch wrapper, token, error codes), sse.ts (the reader), types.ts
+  src/api/         http.ts (the shared fetch: prefix, token, error codes), auth.ts, chats.ts and
+                   memories.ts (the endpoints, one module per area), sse.ts (the reader), types.ts
   src/auth/        token storage, the guard that sends a visitor without a token to login
   src/app/         the pages: login/, and a signed-in group with the new chat, chats/[id]/ and memories/
   src/components/  ChatList, MessageList, Composer, RecalledMemories, Markdown
@@ -56,7 +57,7 @@ frontend/
 
 shadcn/ui is not a package that is installed and upgraded: its CLI copies each component's source into `src/components/ui/`, where it belongs to this repo and is edited like any other file. They are built on Radix primitives, which bring the keyboard handling, focus management and ARIA that would otherwise be written by hand. `@` is an alias for `src/` in `tsconfig.json`, as `components.json` expects, and a component is added with `npx shadcn@latest add <name>`.
 
-The pieces that decide something (`sse.ts`, `client.ts`, the error mapping) have no React in them, so they are tested without rendering. The pages call them and hold no rules of their own.
+The pieces that decide something (`sse.ts`, `http.ts`, the error mapping) have no React in them, so they are tested without rendering. The pages call them and hold no rules of their own.
 
 ## What the server adds
 
