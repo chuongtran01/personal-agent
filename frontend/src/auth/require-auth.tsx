@@ -1,10 +1,11 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 
 import { setUnauthorizedHandler } from "@/api/http";
 import { getToken } from "@/auth/token";
+import { resetStore } from "@/lib/chat-store";
 
 import { loginUrl } from "./redirect";
 
@@ -23,7 +24,6 @@ const onServer = () => false;
  */
 export function RequireAuth({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const pathname = usePathname();
   const signedIn = useSyncExternalStore(noSubscription, hasToken, onServer);
 
   useEffect(() => {
@@ -33,9 +33,12 @@ export function RequireAuth({ children }: { children: ReactNode }) {
       return;
     }
     // A token refused later (expired, or the server was reset) sends the owner back the same way
-    setUnauthorizedHandler(() => router.replace(loginUrl(here())));
+    setUnauthorizedHandler(() => {
+      resetStore();
+      router.replace(loginUrl(here()));
+    });
     return () => setUnauthorizedHandler(null);
-  }, [signedIn, router, pathname]);
+  }, [signedIn, router]);
 
   return signedIn ? children : null;
 }

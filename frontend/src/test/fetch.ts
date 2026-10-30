@@ -31,6 +31,24 @@ export function fakeFetch() {
   };
 }
 
+export type Handler = (init?: RequestInit) => Response | Promise<Response>;
+
+const keyOf = (input: RequestInfo | URL, init?: RequestInit) =>
+  `${init?.method ?? "GET"} ${String(input).replace(/^\/api/, "").split("?")[0]}`;
+
+/** Route fake fetch calls by "METHOD /path". Anything unrouted fails the test loudly. */
+export function routeFetch(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, table: Record<string, Handler>) {
+  fetchMock.mockImplementation(async (input, init) => {
+    const handler = table[keyOf(input, init)];
+    if (!handler) throw new Error(`unrouted: ${keyOf(input, init)}`);
+    return handler(init);
+  });
+}
+
+/** The calls made so far to one "METHOD /path". */
+export const callsTo = (fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, key: string) =>
+  fetchMock.mock.calls.filter(([input, init]) => keyOf(input, init) === key);
+
 /** A response with a JSON body, or a raw string body. */
 export const reply = (status: number, body: unknown) =>
   new Response(typeof body === "string" ? body : JSON.stringify(body), { status });

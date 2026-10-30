@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 
 import { request } from "@/api/http";
+import { getChat, loadChat, resetStore } from "@/lib/chat-store";
 import { nav } from "@/test/navigation";
 import { failure, fakeFetch, reply } from "@/test/fetch";
 
@@ -22,6 +23,7 @@ const protectedPage = () =>
   );
 
 beforeEach(() => {
+  resetStore();
   nav.router.replace.mockReset();
   nav.pathname = "/";
   page("/");
@@ -90,4 +92,19 @@ test("once the page is gone, a refused token no longer redirects", async () => {
   await failure(request("/sessions"));
 
   expect(nav.router.replace).not.toHaveBeenCalled();
+});
+
+test("a token refused later also forgets the chats held in the browser", async () => {
+  setToken("abc", 60);
+  fetchMock.mockResolvedValueOnce(
+    reply(200, [{ id: 1, role: "user", text: "private", created_at: "2026-10-30T09:00:00Z", memories: [] }]),
+  );
+  await loadChat("c1");
+  expect(getChat("c1").messages).toHaveLength(1);
+  protectedPage();
+  fetchMock.mockResolvedValue(reply(401, { detail: "invalid credentials" }));
+
+  await failure(request("/sessions"));
+
+  expect(getChat("c1").messages).toEqual([]);
 });

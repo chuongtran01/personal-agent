@@ -6,6 +6,14 @@ const MESSAGES: Record<string, string> = {
   login_not_configured: "Login is not available: the server is not set up.",
   unauthorized: "Your session has ended. Please log in again.",
   network: "Cannot reach the server.",
+  // Sending a message (the server's refusals and the assistant being unavailable)
+  chat_full: "This chat is full. Start a new one.",
+  message_too_long: "That message is too long.",
+  empty_message: "Type a message first.",
+  turn_in_progress: "Still answering the last message. Try again in a moment.",
+  session_not_found: "That chat no longer exists.",
+  invalid_request: "That chat no longer exists.",
+  agent_not_configured: "The assistant is not available: the server has no model key.",
 };
 
 const FALLBACK = "Something went wrong. Please try again.";
