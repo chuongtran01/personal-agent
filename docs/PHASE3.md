@@ -20,8 +20,8 @@ The evals are the spec again: the agent eval cases are written before the loop t
 - [x] **Prompt**: `backend/app/agent/prompt.py`. The system prompt, rebuilt every turn with the date and the recalled memories as labelled data
 - [x] **Agent loop**: `backend/app/agent/loop.py` and `store.py` (reading and writing a chat). One owner message in, a stream of events out; recalls (with a history pass when the message asks about the past), calls the model, stores every message, stops at a step limit
 - [x] **API**: `backend/app/api/`. Sessions, the streaming message endpoint (`sse.py`), and a read-only memory list
-- [ ] **Agent eval runner**: `evals/agent_eval.py` and the pure checks in `evals/agent_checks.py` (`make eval-agent`). Runs each case through the real loop on freshly seeded memories, with `--memory on|off`, and reports pass rates, latency and tokens
-- [ ] **Repeat runs**: `--repeat N` plays each case N times; the results file has one entry per run and the report lists the flaky cases
+- [x] **Agent eval runner**: `evals/agent_eval.py` and the pure checks in `evals/agent_checks.py` (`make eval-agent`). Runs each case through the real loop on freshly seeded memories, with `--memory on|off|both`, and reports pass rates, latency and tokens
+- [x] **Repeat runs**: `--repeat N` plays each case N times; the results file has one entry per run and the report lists the flaky cases
 - [ ] **Tests**: `backend/tests/`. Login and scoping of every endpoint, recall, the prompt, the loop with a fake model, streaming and size limits. None needs an API key
 - [ ] **Baseline numbers**: recorded in this doc, dev first (three runs), then test once
 
@@ -129,7 +129,7 @@ There is no chat surface yet, so the agent is tried through the API:
 TOKEN=$(curl -s localhost:8000/auth/login -d '{"password":"..."}' -H 'content-type: application/json' | jq -r .access_token)
 SID=$(curl -s -X POST localhost:8000/sessions -H "authorization: Bearer $TOKEN" | jq -r .id)
 curl -N localhost:8000/sessions/$SID/messages -H "authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' -d '{"content":"What do I usually order for lunch?"}'
+  -H 'content-type: application/json' -d '{"text":"Where do I live?"}'
 ```
 
 `-N` keeps curl from buffering, so the `memory` and `text` events print as they arrive. The agent evals are the main way to judge behavior. The web app in phase 4 is a client of this same API; because `POST` streaming cannot use the browser's `EventSource`, it will read the response with `fetch`, and the API needs a `CORS_ORIGINS` setting then (not before).
@@ -141,6 +141,7 @@ Cases are written before the loop and act as its specification. A separate runne
 - **Cases.** One row per scenario: optional earlier owner turns in the same session (`prior_turns`), the judged `message`, `must_recall` and `must_not_recall` (seed keys; every `must_not_recall` key is one the agent may not recall), `must_include` (groups of words, one word from each group must appear, so a wording can vary), `must_not_include`, `expect_unknown`, and the `trap_id` if it comes from `memory_traps.yaml`. Every field is present on every row, with an empty value where it does not apply.
 - **Categories.** Recall used (the answer contains the fact), changed fact (the new value, not the old), forgotten (the deleted fact does not appear, even on a leading question), stale event (a past event is not offered as upcoming), irrelevant memory (an unrelated fact is not mentioned), false memory (a question about something never said gets "I don't know", not an invented answer), follow-up (the second message depends on the first), duplicate wording (the fact is still answered once), history (a question about the past is answered from replaced and ended memories, marked as past), and injection (the email that holds an instruction never reaches the prompt and its payload is not repeated; the seed has no owner-level memory that holds an instruction, so obeying one is tested with real email in phase 6).
 - **Checks, all in code.** The recalled keys are read from the loop's `memory` event, so retrieval is checked at agent level too: a forbidden key in the prompt is a leak, as in the retrieval eval. In the current block that means anything search may not return; in the history block it means deleted, external or not-yet-started memories. A replaced or ended memory in the history block is expected only for a history case. Answer words use case-insensitive matching. An "I don't know" answer is checked with `must_not_include` for the invented value and a short list of refusal phrases; it is spot-checked by hand, and a judge model is added in phase 9 only if the phrase check proves too brittle.
+- **Isolation.** The memories are seeded once per run, not reset between cases, and each case gets a fresh chat. That is safe here because no case can write a memory and nothing reads `last_used_at`, so one case cannot change what the next recalls. The reset before every case arrives with memory writes in phase 5.
 - **Arms.** `--memory off` runs the same cases with recall switched off, so the cases that need memory fail and the ones that must not mention it pass trivially. The gap between the arms is the measured effect of memory. The "last N messages" arm of the README ablation needs facts stated in earlier sessions and waits for phase 4.
 - **Dev and test.** Dev is for prompt changes and is read three times (`--repeat 3`); test is held out and read once, with the prompt and the search mode fixed.
 - **Metrics.** Pass rate per category, a leak count (zero is part of the gate), recalled-key accuracy, tokens and dollars per message, and p50 and p95 seconds per message with the memory step shown separately.
@@ -154,7 +155,7 @@ python -m app.auth hash            # paste the result into .env as OWNER_PASSWOR
 make seed                          # the seed memories, needs OPENAI_API_KEY
 cd backend && .venv/bin/uvicorn app.main:app --reload
 # log in and chat with curl (see below); the web app comes in phase 4
-make eval-agent                    # dev split, needs OPENAI_API_KEY
+make eval-agent                    # dev split, needs OPENAI_API_KEY; ARGS="--memory both --repeat 3", "--split test", "--case a003"
 ```
 
 ## Decisions to settle before starting
@@ -185,7 +186,7 @@ make eval-agent                    # dev split, needs OPENAI_API_KEY
 
 ## Not in this phase
 
-- Writing memories from conversation (extraction, reconciliation, supersede, forget) and editing or deleting from the memory list: phase 5
+- Writing memories from conversation (extraction, reconciliation, supersede, forget) and editing or deleting from the memory list: phase 5, together with resetting the memories before every agent eval case
 - Tools, MCP servers and the confirmation gate: phases 6 and 7
 - A chat surface: the web app (login, chat, memory viewer) is phase 4, a terminal client is phase 10
 - Tracing with Langfuse and the README: phase 9

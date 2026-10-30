@@ -1,4 +1,4 @@
-.PHONY: up down db-reset migrate seed install hooks test lint eval-memory eval-memory-retrieval
+.PHONY: up down db-reset migrate seed install hooks test lint eval-memory eval-memory-retrieval eval-agent
 
 up:
 	docker compose up -d db
@@ -35,3 +35,7 @@ eval-memory:
 # Retrieval eval on the seeded memories, in its own database. ARGS="--split test" for the held-out split
 eval-memory-retrieval:
 	cd backend && .venv/bin/python ../evals/memory_retrieval_eval.py $(ARGS)
+
+# Agent eval: real loop, real model, needs OPENAI_API_KEY. ARGS="--split test" or "--memory both --repeat 3"
+eval-agent:
+	cd backend && .venv/bin/python ../evals/agent_eval.py $(ARGS)
