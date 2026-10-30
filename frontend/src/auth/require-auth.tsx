@@ -9,11 +9,17 @@ import { resetStore } from "@/lib/chat-store";
 
 import { loginUrl } from "./redirect";
 
+// Three answers, not two. The server has no sessionStorage, and React hydrates a page with the
+// server's answer before it reads the browser's, so for that render the token is simply not known.
+// Taking "not known" for "signed out" would send an owner who reloads a page to login, and the login
+// page, seeing the token, would send them straight back.
+type Auth = "unknown" | "signed-in" | "signed-out";
+
 // The token changes only through login and logout, both of which navigate, so there is nothing to
-// subscribe to. The server has no sessionStorage and so never sees a token.
+// subscribe to.
 const noSubscription = () => () => {};
-const hasToken = () => getToken() !== null;
-const onServer = () => false;
+const inBrowser = (): Auth => (getToken() === null ? "signed-out" : "signed-in");
+const onServer = (): Auth => "unknown";
 
 /**
  * Renders its children only for an owner with a token. Without one it sends them to login, to come
@@ -24,11 +30,12 @@ const onServer = () => false;
  */
 export function RequireAuth({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const signedIn = useSyncExternalStore(noSubscription, hasToken, onServer);
+  const auth = useSyncExternalStore(noSubscription, inBrowser, onServer);
 
   useEffect(() => {
+    if (auth === "unknown") return; // the server, or the render that hydrates what it sent
     const here = () => window.location.pathname + window.location.search;
-    if (!signedIn) {
+    if (auth === "signed-out") {
       router.replace(loginUrl(here()));
       return;
     }
@@ -38,7 +45,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
       router.replace(loginUrl(here()));
     });
     return () => setUnauthorizedHandler(null);
-  }, [signedIn, router]);
+  }, [auth, router]);
 
-  return signedIn ? children : null;
+  return auth === "signed-in" ? children : null;
 }

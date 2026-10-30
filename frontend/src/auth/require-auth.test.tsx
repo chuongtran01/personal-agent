@@ -1,5 +1,7 @@
-import { render, screen } from "@testing-library/react";
-import { beforeEach, expect, test, vi } from "vitest";
+import { act, render, screen } from "@testing-library/react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import { request } from "@/api/http";
 import { getChat, loadChat, resetStore } from "@/lib/chat-store";
@@ -107,4 +109,55 @@ test("a token refused later also forgets the chats held in the browser", async (
   await failure(request("/sessions"));
 
   expect(getChat("c1").messages).toEqual([]);
+});
+
+// A reload is not a first render: the server sent HTML, and React hydrates it. During hydration the
+// guard has no browser to ask yet, and it must not take that for "signed out".
+describe("a reload, which hydrates what the server sent", () => {
+  const tree = (
+    <RequireAuth>
+      <p>secret page</p>
+    </RequireAuth>
+  );
+
+  async function reload() {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    container.innerHTML = renderToString(tree); // what the server sends
+    expect(container).toBeEmptyDOMElement(); // nothing of the page: it cannot know the token
+    await act(async () => {
+      hydrateRoot(container, tree);
+    });
+    return container;
+  }
+
+  test("an owner with a token sees the page and is not sent to login on the way", async () => {
+    setToken("abc", 60);
+    page("/memories");
+
+    const container = await reload();
+
+    expect(nav.router.replace).not.toHaveBeenCalled();
+    expect(container).toHaveTextContent("secret page");
+  });
+
+  test("a visitor with no token is sent to login, once, to come back here", async () => {
+    page("/memories");
+
+    const container = await reload();
+
+    expect(container).toBeEmptyDOMElement();
+    expect(nav.router.replace).toHaveBeenCalledExactlyOnceWith("/login?next=%2Fmemories");
+  });
+
+  test("a token refused after a reload still sends the owner to login", async () => {
+    setToken("abc", 60);
+    await reload();
+    page("/chats/x");
+    fetchMock.mockResolvedValue(reply(401, { detail: "invalid credentials" }));
+
+    await failure(request("/sessions"));
+
+    expect(nav.router.replace).toHaveBeenCalledWith("/login?next=%2Fchats%2Fx");
+  });
 });
