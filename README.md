@@ -13,7 +13,7 @@ No agent framework: the loop, the memory and the rules are written by hand, so e
 | 1 | Foundation: schema, Docker Compose, eval harness skeleton | done |
 | 2 | Memory store and retrieval: keyword, vector and hybrid search with recency | done |
 | 3 | Agent loop and API: recall before each reply, owner login, streaming API, agent evals | done |
-| 4 | Web app: login, chats, streaming chat view, recalled memories, memory list | in progress (login is built) |
+| 4 | Web app: login, chats, streaming chat view, recalled memories, memory list | in progress (login, chats and the memory list are built) |
 | 5 | Memory writes: extraction, update, forget | planned |
 | 6 to 7 | Calendar and email over MCP, writes with confirmation | planned |
 | 8 | Chat compaction | planned |
@@ -25,7 +25,7 @@ No agent framework: the loop, the memory and the rules are written by hand, so e
 - **Memory you can search.** Postgres with full-text and pgvector, each memory kept as a row that is never overwritten: a changed fact adds a new row, a replaced one stays as history, a deleted one is never used again.
 - **An agent that uses it.** Before each reply the loop recalls relevant memories (and replaced ones, when asked about the past), puts them in the prompt as labelled data, and streams the answer. It says "I don't know" for what it was never told.
 - **A streaming API** behind a single-owner login (argon2 password hash, signed token): chats, messages as server-sent events, and a read-only memory list.
-- **A web app** built on Next.js, Tailwind and shadcn/ui, with the API client, the stream reader and the login screen so far.
+- **A web app** built on Next.js, Tailwind and shadcn/ui: login, a chat list and a streaming chat view that shows which memories each reply recalled, and a read-only memory list by status.
 
 ## Results so far
 

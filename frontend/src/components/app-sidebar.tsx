@@ -1,6 +1,15 @@
 "use client";
 
-import { Brain, ChevronsUpDown, LogOut, MessageSquare, PanelLeft, SquarePen, User } from "lucide-react";
+import {
+  Brain,
+  ChevronsUpDown,
+  Library,
+  LogOut,
+  MessageSquare,
+  PanelLeft,
+  SquarePen,
+  User,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 
@@ -97,6 +106,14 @@ export function AppSidebar() {
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild isActive={pathname === "/memories"} tooltip="Memories">
+                <Link href="/memories" onClick={() => setOpenMobile(false)}>
+                  <Library />
+                  <span>Memories</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             {/* Only in the folded strip, where the list of chats is out of sight: it unfolds the sidebar */}
             <SidebarMenuItem className="hidden group-data-[collapsible=icon]:block">
               <SidebarMenuButton tooltip="Chats" onClick={() => setOpen(true)}>
@@ -126,6 +143,12 @@ export function AppSidebar() {
               <DropdownMenuContent side="top" align="start" className="w-(--radix-dropdown-menu-trigger-width) min-w-56">
                 <DropdownMenuLabel>Owner</DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/memories" onClick={() => setOpenMobile(false)}>
+                    <Library aria-hidden />
+                    Memories
+                  </Link>
+                </DropdownMenuItem>
                 <DropdownMenuItem onSelect={signOut}>
                   <LogOut aria-hidden />
                   Log out

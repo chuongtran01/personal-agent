@@ -50,6 +50,26 @@ test("the sidebar offers a new chat, then the recent chats", async () => {
   await screen.findByRole("link", { name: "My first chat" });
 });
 
+test("the sidebar leads to the memories, and marks them when they are open", async () => {
+  nav.pathname = "/memories";
+  render(<AppShell>x</AppShell>);
+
+  const link = screen.getByRole("link", { name: "Memories" });
+
+  expect(link).toHaveAttribute("href", "/memories");
+  expect(link).toHaveAttribute("data-active", "true");
+  expect(screen.getByRole("link", { name: "New chat" })).toHaveAttribute("data-active", "false");
+});
+
+test("the account menu leads to the memories too", async () => {
+  render(<AppShell>x</AppShell>);
+
+  await userEvent.click(screen.getByRole("button", { name: "Owner" }));
+
+  const item = await screen.findByRole("menuitem", { name: "Memories" });
+  expect(item).toHaveAttribute("href", "/memories");
+});
+
 test("marks where the owner is: New chat on the home page, a chat on its own page", async () => {
   const { unmount } = render(<AppShell>x</AppShell>);
   await screen.findByRole("link", { name: "My first chat" });
