@@ -63,14 +63,33 @@ test("marks where the owner is: New chat on the home page, a chat on its own pag
   expect(screen.getByRole("link", { name: "New chat" })).toHaveAttribute("data-active", "false");
 });
 
-test("the sidebar can be folded away and brought back", async () => {
+test("the toggle is inside the sidebar, and a wide page has no bar of its own", () => {
+  const { container } = render(<AppShell>x</AppShell>);
+
+  expect(within(sidebar(container)).getByRole("button", { name: "Close sidebar" })).toBeInTheDocument();
+  expect(container.querySelector("header")).toBeNull();
+});
+
+test("the sidebar can be folded away and brought back, with the button in the sidebar each time", async () => {
   const { container } = render(<AppShell>x</AppShell>);
   expect(sidebar(container)).toHaveAttribute("data-state", "expanded");
 
-  await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+  await userEvent.click(within(sidebar(container)).getByRole("button", { name: "Close sidebar" }));
+  expect(sidebar(container)).toHaveAttribute("data-state", "collapsed");
+  expect(screen.queryByRole("button", { name: "Close sidebar" })).not.toBeInTheDocument();
+
+  // Folded, the mark at the top is the way back
+  await userEvent.click(within(sidebar(container)).getByRole("button", { name: "Open sidebar" }));
+  expect(sidebar(container)).toHaveAttribute("data-state", "expanded");
+});
+
+test("Ctrl+B folds and unfolds it from the keyboard", async () => {
+  const { container } = render(<AppShell>x</AppShell>);
+
+  await userEvent.keyboard("{Control>}b{/Control}");
   expect(sidebar(container)).toHaveAttribute("data-state", "collapsed");
 
-  await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+  await userEvent.keyboard("{Control>}b{/Control}");
   expect(sidebar(container)).toHaveAttribute("data-state", "expanded");
 });
 
@@ -78,7 +97,7 @@ test("folded, the sidebar stays as a strip of icons instead of going away", asyn
   const { container } = render(<AppShell>x</AppShell>);
   expect(sidebar(container)).toHaveAttribute("data-collapsible", "");
 
-  await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+  await userEvent.click(screen.getByRole("button", { name: "Close sidebar" }));
 
   // "icon" is what keeps the strip on screen; "offcanvas" would slide it out of sight
   expect(sidebar(container)).toHaveAttribute("data-collapsible", "icon");
@@ -88,7 +107,7 @@ test("folded, the sidebar stays as a strip of icons instead of going away", asyn
 
 test("the Chats icon in the folded strip unfolds the sidebar", async () => {
   const { container } = render(<AppShell>x</AppShell>);
-  await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+  await userEvent.click(screen.getByRole("button", { name: "Close sidebar" }));
   expect(sidebar(container)).toHaveAttribute("data-state", "collapsed");
 
   await userEvent.click(screen.getByRole("button", { name: "Chats" }));
@@ -96,23 +115,27 @@ test("the Chats icon in the folded strip unfolds the sidebar", async () => {
   expect(sidebar(container)).toHaveAttribute("data-state", "expanded");
 });
 
-test("on a narrow screen the sidebar is a drawer behind the same button", async () => {
+test("on a narrow screen the page has a menu button, and the sidebar is a drawer behind it", async () => {
   setWindowWidth(500);
-  render(<AppShell>x</AppShell>);
+  const { container } = render(<AppShell>x</AppShell>);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(screen.queryByText("Recents")).not.toBeInTheDocument();
+  expect(container.querySelector("header")).not.toBeNull();
 
-  await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+  await userEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
 
   const drawer = await screen.findByRole("dialog");
   expect(within(drawer).getByText("Recents")).toBeInTheDocument();
   expect(await within(drawer).findByRole("link", { name: "My first chat" })).toBeInTheDocument();
+  // The drawer carries its own button to close it, as the sidebar does
+  await userEvent.click(within(drawer).getByRole("button", { name: "Close sidebar" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });
 
 test("following a chat in the drawer closes it", async () => {
   setWindowWidth(500);
   render(<AppShell>x</AppShell>);
-  await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+  await userEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
   const drawer = await screen.findByRole("dialog");
 
   await userEvent.click(await within(drawer).findByRole("link", { name: "My first chat" }));
@@ -120,7 +143,6 @@ test("following a chat in the drawer closes it", async () => {
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });
 
-// While the menu is open the rest of the page is hidden from assistive technology, the button too
 const account = () => screen.getByRole("button", { name: "Owner", hidden: true });
 
 test("who is signed in is a button at the bottom of the sidebar, with a menu that starts closed", () => {

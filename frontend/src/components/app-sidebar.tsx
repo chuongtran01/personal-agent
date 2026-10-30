@@ -1,12 +1,13 @@
 "use client";
 
-import { Brain, ChevronsUpDown, LogOut, MessageSquare, SquarePen, User } from "lucide-react";
+import { Brain, ChevronsUpDown, LogOut, MessageSquare, PanelLeft, SquarePen, User } from "lucide-react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 
 import { logout } from "@/api/auth";
 import { ChatList } from "@/components/chat-list";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +27,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { resetStore } from "@/lib/chat-store";
 
 /**
@@ -35,7 +37,8 @@ import { resetStore } from "@/lib/chat-store";
 export function AppSidebar() {
   const router = useRouter();
   const pathname = usePathname();
-  const { setOpen, setOpenMobile } = useSidebar();
+  const { isMobile, state, setOpen, setOpenMobile, toggleSidebar } = useSidebar();
+  const folded = state === "collapsed" && !isMobile;
 
   function signOut() {
     resetStore(); // the next owner must not see this chat's text
@@ -45,13 +48,43 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="px-3 pt-4 group-data-[collapsible=icon]:px-2">
-        <div className="flex items-center gap-2 px-1 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
-          <Brain className="size-5 shrink-0" aria-hidden />
-          <span className="text-base font-semibold group-data-[collapsible=icon]:hidden">
-            Personal Agent
-          </span>
-        </div>
+      <SidebarHeader className="px-3 pt-3 group-data-[collapsible=icon]:px-2">
+        {folded ? (
+          // Folded, the mark is the way back: on hover or focus it turns into the unfold button
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="Open sidebar"
+                onClick={toggleSidebar}
+                className="group/logo mx-auto flex size-8 items-center justify-center rounded-md text-sidebar-foreground outline-hidden hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+              >
+                <Brain className="size-5 group-hover/logo:hidden group-focus-visible/logo:hidden" aria-hidden />
+                <PanelLeft className="hidden size-5 group-hover/logo:block group-focus-visible/logo:block" aria-hidden />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">Open sidebar</TooltipContent>
+          </Tooltip>
+        ) : (
+          <div className="flex items-center gap-2 pl-1">
+            <Brain className="size-5 shrink-0" aria-hidden />
+            <span className="text-base font-semibold">Personal Agent</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="ml-auto size-8"
+                  aria-label="Close sidebar"
+                  onClick={toggleSidebar}
+                >
+                  <PanelLeft aria-hidden />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Close sidebar</TooltipContent>
+            </Tooltip>
+          </div>
+        )}
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
