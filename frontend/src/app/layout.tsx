@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 
 import { ThemeFollower } from "@/components/theme-follower";
 
@@ -22,7 +23,8 @@ export const metadata: Metadata = {
 };
 
 // Sets the dark class before the first paint so a dark system never flashes light. It is our own
-// constant string; lib/theme.ts keeps the class in step with the system afterwards
+// constant string, run by next/script before hydration (a bare <script> in a component makes React
+// warn); lib/theme.ts keeps the class in step with the system afterwards
 const THEME_SCRIPT = `document.documentElement.classList.toggle('dark', matchMedia('(prefers-color-scheme: dark)').matches)`;
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -32,12 +34,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
-      </head>
       <body className="min-h-full flex flex-col">
         <ThemeFollower />
         {children}
+        <Script id="theme" strategy="beforeInteractive">
+          {THEME_SCRIPT}
+        </Script>
       </body>
     </html>
   );
