@@ -33,3 +33,9 @@ if touches_backend; then
   run "ruff check" sh -c "cd backend && .venv/bin/ruff check --config pyproject.toml . ../evals"
   run "tests (needs the database: make up)" sh -c "cd backend && .venv/bin/python -m pytest -q -x"
 fi
+
+if touches_frontend && have_frontend_deps; then
+  echo "frontend"
+  run "type check" sh -c "cd frontend && npm run --silent typecheck"
+  run "tests" sh -c "cd frontend && npm test --silent"
+fi

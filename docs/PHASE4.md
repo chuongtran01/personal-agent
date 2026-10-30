@@ -14,7 +14,7 @@ Nothing here writes memories. The memory list is read-only; editing and deleting
 ## Deliverables
 
 - [x] **Recalled memories stored with the reply**: `backend/app/agent/messages.py`, `loop.py`, `store.py` and `api/sessions.py`. The reply that ends a turn carries the ids recalled for it, and `GET /sessions/{id}/messages` returns them resolved (kind, content, whether the memory is a past one, its status today). The model never sees these fields
-- [ ] **Frontend scaffold**: `frontend/`. Vite, React and TypeScript, Tailwind CSS and shadcn/ui (set up with its CLI, the components copied into `src/components/ui/`), a dev proxy to the API, ESLint and the type check, Vitest with Testing Library, and `make web`, `make web-test` and `make web-build`
+- [x] **Frontend scaffold**: `frontend/`. Next.js (App Router), React and TypeScript, Tailwind CSS and shadcn/ui (set up with its CLI, the components copied into `src/components/ui/`), a rewrite that forwards `/api` to the backend, ESLint and the type check, Vitest with Testing Library, and `make web`, `make web-test` and `make web-build`
 - [ ] **API client and event reader**: `frontend/src/api/`. A typed `fetch` wrapper that adds the token and turns errors into codes, and a reader that parses the `POST` stream into events. Built first, against a stream recorded from the real API
 - [ ] **Login**: the password form, the token kept for the tab, and the way back to login when the token is missing or refused
 - [ ] **Chats**: the chat list, a new chat and the streaming chat view, with the recalled memories under each reply
@@ -27,8 +27,8 @@ Nothing here writes memories. The memory list is read-only; editing and deleting
 ## Architecture
 
 ```
-browser (Vite dev server, same origin)
-  /api/*  --proxy-->  FastAPI on :8000   (the /api prefix is dropped)
+browser (Next.js server, same origin)
+  /api/*  --rewrite-->  FastAPI on :8000   (the /api prefix is dropped)
 
 login      POST /auth/login                       -> token, kept in sessionStorage
 chat list  GET  /sessions                         -> sidebar
@@ -37,7 +37,9 @@ chat view  GET  /sessions/{id}/messages           -> history, with the recalled 
 memories   GET  /memories?status=&limit=&offset=  -> the list
 ```
 
-The browser only ever talks to its own origin and the dev server forwards `/api` to the backend, so there is no CORS setting and the token is never sent across origins. `POST` streaming cannot use `EventSource`, so the reply is read with `fetch` and a `ReadableStream`.
+The browser only ever talks to its own origin and Next forwards `/api` to the backend (a `rewrites()` entry in `next.config.ts`, with the target in `API_URL`, `http://localhost:8000` by default), so there is no CORS setting and the token is never sent across origins. A reply is a stream, so the config also turns compression off and raises the proxy timeout above the server's longest turn. `POST` streaming cannot use `EventSource`, so the reply is read with `fetch` and a `ReadableStream`.
+
+**What Next.js is used for.** It is the app shell: file-based routing, the dev server, the build, fonts and the rewrite. Every page that shows data is a client component (`"use client"`), because the token lives in `sessionStorage`, which a server cannot see, so nothing is rendered or fetched on the server, and there are no Route Handlers and no middleware in this phase. The API stays the only backend and the only thing that checks a token.
 
 Layout:
 
@@ -45,16 +47,16 @@ Layout:
 frontend/
   src/api/         client.ts (fetch wrapper, token, error codes), sse.ts (the reader), types.ts
   src/auth/        token storage, the guard that sends a visitor without a token to login
-  src/views/       Login, Chat, Memories
+  src/app/         the pages: login/, and a signed-in group with the new chat, chats/[id]/ and memories/
   src/components/  ChatList, MessageList, Composer, RecalledMemories, Markdown
   src/components/ui/  the shadcn/ui components in use (Button, Input, Textarea, Tabs, ...), copied in
   src/lib/         utils.ts (the `cn` class helper that shadcn components import)
   src/test/        a stream recorded from the real API, helpers that fake fetch
 ```
 
-shadcn/ui is not a package that is installed and upgraded: its CLI copies each component's source into `src/components/ui/`, where it belongs to this repo and is edited like any other file. They are built on Radix primitives, which bring the keyboard handling, focus management and ARIA that would otherwise be written by hand. `@` is an alias for `src/` in the Vite and TypeScript configs, as `components.json` expects, and a component is added with `npx shadcn@latest add <name>`.
+shadcn/ui is not a package that is installed and upgraded: its CLI copies each component's source into `src/components/ui/`, where it belongs to this repo and is edited like any other file. They are built on Radix primitives, which bring the keyboard handling, focus management and ARIA that would otherwise be written by hand. `@` is an alias for `src/` in `tsconfig.json`, as `components.json` expects, and a component is added with `npx shadcn@latest add <name>`.
 
-The pieces that decide something (`sse.ts`, `client.ts`, the error mapping) have no React in them, so they are tested without rendering. The views call them and hold no rules of their own.
+The pieces that decide something (`sse.ts`, `client.ts`, the error mapping) have no React in them, so they are tested without rendering. The pages call them and hold no rules of their own.
 
 ## What the server adds
 
@@ -87,7 +89,7 @@ The model never sees these fields: the loop stores them, but the input sent to t
 
 ## Look and components
 
-Tailwind CSS (v4, through its Vite plugin) with shadcn/ui's default style and the neutral base colour, lucide for icons. The theme is the CSS variables shadcn defines; light and dark follow the system setting through the `dark` class, set once at start-up and when the system setting changes, with no toggle. What each screen uses:
+Tailwind CSS (v4, as `create-next-app` sets it up) with shadcn/ui's default style and the neutral base colour, lucide for icons. The theme is the CSS variables shadcn defines; light and dark follow the system setting through the `dark` class, with no toggle. A small script in the page head sets the class before the first paint, so a dark system never flashes white, and a client component keeps it in step with the system afterwards. What each screen uses:
 
 | Screen | shadcn components |
 | --- | --- |
@@ -114,7 +116,7 @@ A failed turn leaves the owner's message saved with no reply. Sending the text a
 
 ## Signing in
 
-The token is kept in `sessionStorage`: it survives a reload and is gone when the tab closes, and it is not shared with other tabs. It lasts 12 hours on the server and the client also stores when it ends, so it asks for the password again without a failed request first. Any `401` clears the token and goes to login, remembering where the visitor was. Logging out clears it. Nothing in the bundle is secret: there is no API key in the browser and the model is only ever called from the server.
+The token is kept in `sessionStorage`: it survives a reload and is gone when the tab closes, and it is not shared with other tabs. It lasts 12 hours on the server and the client also stores when it ends, so it asks for the password again without a failed request first. Any `401` clears the token and goes to login, remembering where the visitor was. The guard is client-side: the signed-in pages render nothing until the token has been checked, then send a visitor without one to `/login`. Next's middleware cannot see `sessionStorage`, so it is not used for this; the API is what actually refuses a request without a valid token. Logging out clears it. Nothing in the bundle is secret: there is no API key in the browser and the model is only ever called from the server.
 
 Because the answer is model output built from stored text, it is treated as untrusted: Markdown is rendered without raw HTML, links are shown only for `http` and `https` and open with `rel="noopener noreferrer"`, and a memory's text is always plain text.
 
@@ -154,17 +156,18 @@ The hooks run the type check, the linter and the tests when `frontend/` changed 
 make up && make migrate
 make seed                                         # the seed memories, needs OPENAI_API_KEY
 cd backend && .venv/bin/uvicorn app.main:app --reload     # APP_ENV=dev in .env for /docs
-make web                                          # npm install, then the dev server on :5173
+make web                                          # npm install, then the dev server on :3000
 ```
 
-Open `http://localhost:5173` and log in with the password whose hash is in `OWNER_PASSWORD_HASH`. Node 22 or later. `make web-test` runs the frontend tests and `make web-build` type-checks and builds.
+Open `http://localhost:3000` and log in with the password whose hash is in `OWNER_PASSWORD_HASH`. Node 22 or later. `make web-test` runs the frontend tests and `make web-build` runs the production build (which also type-checks); `make web-lint` runs the type check and ESLint.
 
 ## Decisions to settle before starting
 
 | Decision | Default if you say nothing |
 | --- | --- |
-| Stack | Vite, React 19 and TypeScript, as in `DESIGN.md`; Tailwind and shadcn/ui for the interface; React Router for the three views; plain `fetch` and small hooks, no data library |
-| How the browser reaches the API | The dev server proxies `/api` to the backend, so one origin and no CORS setting. Serving the built app and the API from one host is a deployment question for phase 9 |
+| Stack | Next.js (App Router), React and TypeScript, as in `DESIGN.md`; Tailwind and shadcn/ui for the interface; Next's file routing for the pages; plain `fetch` and small hooks, no data library |
+| What Next does here | App shell, routing, build and the `/api` rewrite. Client components only: no server rendering of data, no Route Handlers, no middleware auth, because the token is in the browser |
+| How the browser reaches the API | Next rewrites `/api/*` to the backend, so one origin and no CORS setting. The rewrite needs a running Next server (`next start`), so a static export is not an option; where the built app runs is a deployment question for phase 9 |
 | Where the token lives | `sessionStorage`, cleared on any `401` and on logout |
 | Styling | Tailwind CSS v4 and shadcn/ui (Radix primitives, source copied into the repo), neutral base colour, lucide icons; light and dark follow the system through the `dark` class, no toggle |
 | Markdown | Rendered with `react-markdown` without raw HTML; links limited to `http` and `https` |
@@ -182,7 +185,7 @@ Open `http://localhost:5173` and log in with the password whose hash is in `OWNE
 | Check | Expected result |
 | --- | --- |
 | Login | A wrong password is refused with a message; the right one opens the chat; a reload stays signed in; a new tab asks again; logging out clears it |
-| Streaming | A reply arrives in pieces in the browser, not all at once, through the dev proxy |
+| Streaming | A reply arrives in pieces in the browser, not all at once, through the rewrite, in the dev server and in a production build run with `next start` |
 | Memories recalled | The list is under each reply while it streams and after a reload, the same on both; a past memory is labelled "was true"; a question with no match says so |
 | History | A reloaded chat shows the same messages in the same order, and a chat from before this phase still opens |
 | Forgotten and replaced | A memory deleted since shows no text on an old reply; a replaced one shows "since replaced" |
@@ -204,5 +207,5 @@ Open `http://localhost:5173` and log in with the password whose hash is in `OWNE
 - Sign-up, several users and per-user data: phase 11
 - A theme toggle, custom branding or a design system of our own beyond the shadcn defaults
 - Deleting, renaming or searching chats, regenerating or editing a sent message, and attachments or voice
-- Hosting: serving the built app from the API or a reverse proxy, HTTPS and a production build pipeline
+- Hosting: where `next start` runs, HTTPS and a production build pipeline
 - A login limit or a token refresh: the token lasts 12 hours and then the password is asked for again

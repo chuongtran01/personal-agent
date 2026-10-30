@@ -56,7 +56,7 @@ Mostly standard choices, so the new work is the memory and not the plumbing.
 
 | Layer | Choice | Why |
 | --- | --- | --- |
-| Frontend | Web app (Vite, React, TypeScript), from phase 4; a terminal client in phase 10 | The API and agent evals come first, so the UI is built against an API that already works |
+| Frontend | Web app (Next.js, React, TypeScript), from phase 4; a terminal client in phase 10 | The API and agent evals come first, so the UI is built against an API that already works |
 | API | FastAPI | Async, native streaming (SSE), typed request models; already proven here |
 | Agent loop | Hand-written against the OpenAI API | Every step stays visible and testable |
 | LLM | OpenAI, a current model for the agent and as judge | Provider sits behind a thin interface; model chosen by the evals, not by habit |

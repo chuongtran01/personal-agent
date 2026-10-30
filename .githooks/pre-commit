@@ -15,3 +15,9 @@ if touches_backend; then
   run "ruff check" sh -c "cd backend && .venv/bin/ruff check --config pyproject.toml . ../evals"
   run "ruff format --check" sh -c "cd backend && .venv/bin/ruff format --check --config pyproject.toml . ../evals"
 fi
+
+if touches_frontend && have_frontend_deps; then
+  echo "frontend"
+  run "type check" sh -c "cd frontend && npm run --silent typecheck"
+  run "eslint" sh -c "cd frontend && npm run --silent lint"
+fi
