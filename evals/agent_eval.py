@@ -80,11 +80,11 @@ class Turned:
     _chunks: list[str] = field(default_factory=list)
 
 
-async def play(loop: AgentLoop, session_id, text: str, memory: bool, key_of: dict[int, str]):
+async def play(loop: AgentLoop, session_id, text: str, key_of: dict[int, str]):
     """One owner message through the loop, with everything it reported."""
     turned = Turned()
     try:
-        turn = await loop.start(session_id, text, memory=memory)
+        turn = await loop.start(session_id, text)
     except TurnRefused as refusal:
         turned.error = refusal.code
         return turned
@@ -109,7 +109,6 @@ async def run_case(
     session_factory,
     case: AgentCase,
     run: int,
-    memory: bool,
     seed_memories: dict[str, SeedMemory],
     key_of: dict[int, str],
 ) -> CaseRun:
@@ -118,11 +117,11 @@ async def run_case(
         session_id = await store.create_session(db)
     turned = Turned()
     for earlier in case.prior_turns:
-        turned = await play(loop, session_id, earlier, memory, key_of)
+        turned = await play(loop, session_id, earlier, key_of)
         if turned.error:
             break
     if not turned.error:
-        turned = await play(loop, session_id, case.message, memory, key_of)
+        turned = await play(loop, session_id, case.message, key_of)
 
     verdict = check_case(
         case, seed_memories, turned.current, turned.past, turned.answer, turned.error
@@ -132,7 +131,7 @@ async def run_case(
         id=case.id,
         category=case.category,
         run=run,
-        memory=memory,
+        memory=loop.recall_enabled,
         passed=verdict.passed,
         failures=verdict.failures,
         leaks=verdict.leaks,
@@ -294,18 +293,23 @@ async def main(
             embedder = OpenAIEmbedder()
             ids = await seed(db, embedder, seed_memories)
         key_of = {memory_id: key for key, memory_id in ids.items()}
-        loop = AgentLoop(
-            session_factory,
-            OpenAIClient(),
-            embedder,
-            clock=lambda: EVAL_NOW,
-            recall_mode=recall_mode,
-        )
+        client = OpenAIClient()
+        loops = {
+            memory: AgentLoop(
+                session_factory,
+                client,
+                embedder,
+                clock=lambda: EVAL_NOW,
+                recall_mode=recall_mode,
+                recall_enabled=memory,
+            )
+            for memory in arms
+        }
         gate = asyncio.Semaphore(concurrency)
 
         async def one(case, run, memory):
             async with gate:
-                return await run_case(loop, session_factory, case, run, memory, by_key, key_of)
+                return await run_case(loops[memory], session_factory, case, run, by_key, key_of)
 
         runs: dict[bool, list[CaseRun]] = {}
         for memory in arms:

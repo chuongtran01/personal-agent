@@ -134,7 +134,6 @@ class Turn:
 
     agent: "AgentLoop"
     session_id: uuid.UUID
-    memory: bool
     _released: bool = field(default=False, init=False)
 
     def close(self) -> None:
@@ -161,6 +160,7 @@ class AgentLoop:
         tools: ToolRunner | None = None,
         clock: Callable[[], datetime] = utcnow,
         recall_mode: Mode | None = None,
+        recall_enabled: bool = True,
         max_steps: int | None = None,
         retry_delay: float = RETRY_DELAY_SECONDS,
     ):
@@ -170,11 +170,16 @@ class AgentLoop:
         self._tools = tools or NoTools()
         self._clock = clock
         self._recall_mode = recall_mode
+        self._recall_enabled = recall_enabled
         self._max_steps = settings.agent_max_steps if max_steps is None else max_steps
         self._retry_delay = retry_delay
         self._busy: set[uuid.UUID] = set()
 
-    async def start(self, session_id: uuid.UUID, text: str, *, memory: bool = True) -> Turn:
+    @property
+    def recall_enabled(self) -> bool:
+        return self._recall_enabled
+
+    async def start(self, session_id: uuid.UUID, text: str) -> Turn:
         """Accept an owner message: check it, take the chat's turn and store the message.
 
         Raises TurnRefused (and stores nothing) when the message cannot be taken."""
@@ -186,7 +191,7 @@ class AgentLoop:
         if session_id in self._busy:
             raise TurnInProgress("this chat is still answering the last message")
         self._busy.add(session_id)  # no await between the check and this line
-        turn = Turn(self, session_id, memory)
+        turn = Turn(self, session_id)
         try:
             async with self._sessions() as db:
                 if not await store.session_exists(db, session_id):
@@ -214,7 +219,7 @@ class AgentLoop:
         now = self._clock()
         recalled = Recalled(current=())
         recall_seconds = 0.0
-        if turn.memory:
+        if self._recall_enabled:
             owner_messages = [m.text for m in history if isinstance(m, UserMessage)]
             began = time.perf_counter()
             try:

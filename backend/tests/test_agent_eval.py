@@ -42,7 +42,7 @@ async def world(session_factory):
     return {memory_id: key for key, memory_id in ids.items()}
 
 
-def loop_for(session_factory, *scripts):
+def loop_for(session_factory, *scripts, recall_enabled=True):
     llm = ScriptedLLM(*scripts)
     loop = AgentLoop(
         session_factory,
@@ -50,14 +50,15 @@ def loop_for(session_factory, *scripts):
         FakeEmbedder(),
         clock=lambda: EVAL_NOW,
         recall_mode="keyword",
+        recall_enabled=recall_enabled,
         retry_delay=0,
     )
     return loop, llm
 
 
 async def play(session_factory, world, c, *scripts, memory=True):
-    loop, llm = loop_for(session_factory, *scripts)
-    run = await run_case(loop, session_factory, c, 1, memory, SEED, world)
+    loop, llm = loop_for(session_factory, *scripts, recall_enabled=memory)
+    run = await run_case(loop, session_factory, c, 1, SEED, world)
     return run, llm
 
 
@@ -125,8 +126,8 @@ async def test_an_earlier_turn_that_fails_stops_the_case(session_factory, world)
 async def test_every_run_gets_a_fresh_chat(session_factory, world):
     loop, _ = loop_for(session_factory, reply("one"), reply("two"))
 
-    await run_case(loop, session_factory, case(), 1, True, SEED, world)
-    await run_case(loop, session_factory, case(), 2, True, SEED, world)
+    await run_case(loop, session_factory, case(), 1, SEED, world)
+    await run_case(loop, session_factory, case(), 2, SEED, world)
 
     async with session_factory() as db:
         counts = (

@@ -68,8 +68,8 @@ def make_loop(session_factory, llm, **kwargs):
     return AgentLoop(session_factory, llm, FakeEmbedder(), clock=lambda: NOW, **kwargs)
 
 
-async def play(loop, chat, text, **kwargs):
-    turn = await loop.start(chat, text, **kwargs)
+async def play(loop, chat, text):
+    turn = await loop.start(chat, text)
     return [event async for event in turn.events()]
 
 
@@ -166,7 +166,9 @@ async def test_turning_memory_off_sends_no_memories_and_marks_none(session_facto
     llm = ScriptedLLM(reply("I don't know."))
 
     events = await play(
-        make_loop(session_factory, llm), chat, "Where does the owner live? Porto", memory=False
+        make_loop(session_factory, llm, recall_enabled=False),
+        chat,
+        "Where does the owner live? Porto",
     )
 
     assert events[0] == MemoryRecalled((), ())
@@ -503,3 +505,24 @@ def test_the_utc_default_clock_is_timezone_aware():
     from app.agent.loop import utcnow
 
     assert utcnow().tzinfo is not None and abs((utcnow() - datetime.now(UTC)).total_seconds()) < 5
+
+
+async def test_a_loop_with_recall_off_never_calls_the_embedder(session_factory, chat):
+    # A broken embedder would end the turn with recall_failed if recall ran at all
+    loop = AgentLoop(
+        session_factory,
+        ScriptedLLM(reply("ok")),
+        BrokenEmbedder(),
+        clock=lambda: NOW,
+        recall_enabled=False,
+    )
+
+    events = await play(loop, chat, "hi")
+
+    assert isinstance(events[-1], AgentDone)
+
+
+def test_whether_recall_runs_is_a_property_of_the_loop_and_not_of_a_message():
+    import inspect
+
+    assert "memory" not in inspect.signature(AgentLoop.start).parameters

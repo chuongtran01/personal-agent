@@ -8,6 +8,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file="../.env", extra="ignore")
 
+    # `dev` serves the interactive API docs (/docs, /redoc, /openapi.json); anything else closes
+    # them, so the route list is not public by default (docs/PHASE3.md)
+    app_env: str = "production"
+
     database_url: str = "postgresql+psycopg://agent:agent@localhost:5432/agent"
     openai_api_key: str = ""
     agent_model: str = "gpt-6-luna"
