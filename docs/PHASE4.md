@@ -16,7 +16,7 @@ Nothing here writes memories. The memory list is read-only; editing and deleting
 - [x] **Recalled memories stored with the reply**: `backend/app/agent/messages.py`, `loop.py`, `store.py` and `api/sessions.py`. The reply that ends a turn carries the ids recalled for it, and `GET /sessions/{id}/messages` returns them resolved (kind, content, whether the memory is a past one, its status today). The model never sees these fields
 - [x] **Frontend scaffold**: `frontend/`. Next.js (App Router), React and TypeScript, Tailwind CSS and shadcn/ui (set up with its CLI, the components copied into `src/components/ui/`), a rewrite that forwards `/api` to the backend, ESLint and the type check, Vitest with Testing Library, and `make web`, `make web-test` and `make web-build`
 - [x] **API client and event reader**: `frontend/src/api/`. A typed `fetch` wrapper that adds the token and turns errors into codes, and a reader that parses the `POST` stream into events. Built first, against a stream recorded from the real API
-- [ ] **Login**: the password form, the token kept for the tab, and the way back to login when the token is missing or refused
+- [x] **Login**: the password form, the token kept for the tab, and the way back to login when the token is missing or refused
 - [ ] **Chats**: the chat list, a new chat and the streaming chat view, with the recalled memories under each reply
 - [ ] **Memory list**: read-only, by status, with the dates, the source and what replaced what
 - [ ] **Errors and limits**: every refusal and failure the API can give has a plain message and a way forward
@@ -72,7 +72,7 @@ The model never sees these fields: the loop stores them, but the input sent to t
 
 ## Screens
 
-**Login.** One password field. A wrong password says so and keeps the field; the `503` that means login is not configured says the server is not set up, without naming settings. After login the visitor goes where they were headed, or to a new chat.
+**Login.** One password field. A wrong password says so and keeps the field; the `503` that means login is not configured says the server is not set up, without naming settings. After login the visitor goes where they were headed, or to a new chat. Where they were headed travels in the address as `?next=`, which anyone can write, so it is followed only when it is a path on this site: `//host`, `https://host`, `javascript:`, a backslash, a tab the URL parser would drop, and the login page itself all go to the home page. `router.replace` runs `javascript:` URLs, so this is a security check and not a nicety. Someone already signed in who opens the login page is sent on without seeing it.
 
 **Chats.** A sidebar with the chats newest first, each as its preview and time, and a "New chat" entry; on a narrow screen it is a drawer. A new chat is not created until its first message is sent, so empty chats do not pile up: sending creates the session, sends the message and moves to `/chats/{id}`.
 
@@ -117,7 +117,9 @@ A failed turn leaves the owner's message saved with no reply. Sending the text a
 
 ## Signing in
 
-The token is kept in `sessionStorage`: it survives a reload and is gone when the tab closes, and it is not shared with other tabs. It lasts 12 hours on the server and the client also stores when it ends, so it asks for the password again without a failed request first. Any `401` clears the token and goes to login, remembering where the visitor was. The guard is client-side: the signed-in pages render nothing until the token has been checked, then send a visitor without one to `/login`. Next's middleware cannot see `sessionStorage`, so it is not used for this; the API is what actually refuses a request without a valid token. Logging out clears it. Nothing in the bundle is secret: there is no API key in the browser and the model is only ever called from the server.
+The token is kept in `sessionStorage`: it survives a reload and is gone when the tab closes, and it is not shared with other tabs. It lasts 12 hours on the server and the client also stores when it ends, so it asks for the password again without a failed request first. Any `401` clears the token and goes to login, remembering where the visitor was. The guard is client-side: the signed-in pages render nothing until the token has been checked, then send a visitor without one to `/login`. Next's proxy (called middleware before this version) cannot see `sessionStorage`, so it is not used for this; the API is what actually refuses a request without a valid token.
+
+**The guard hides a page; it does not stop it being sent.** Next ships what Server Components render under a client component in its page data (`self.__next_f`), even when the client component renders nothing. So nothing in the signed-in group renders or fetches private data on the server: every page there is a client component that gets its data from the API with the token, in the browser, and the server-rendered part is static text only. Checked on the production build: the markup for a visitor is empty. Logging out clears it. Nothing in the bundle is secret: there is no API key in the browser and the model is only ever called from the server.
 
 Because the answer is model output built from stored text, it is treated as untrusted: Markdown is rendered without raw HTML, links are shown only for `http` and `https` and open with `rel="noopener noreferrer"`, and a memory's text is always plain text.
 
@@ -145,6 +147,7 @@ The frontend tests run in Vitest with Testing Library and a fake `fetch` that re
 
 - **Reader:** a frame split across chunks, a split multi-byte character, `\r\n`, comments, an unknown event, a final frame without its blank line, a stream that ends without `done`.
 - **Client:** the token is sent, a `401` signs out, an error body becomes its code, a network failure becomes a message.
+- **Guard and redirects:** a visitor without a token, or with an expired one, sees nothing and is sent to login with a `next` that includes the query; a token refused later does the same from wherever the owner is; the handler is removed when the page goes; `safeNext` is tested against the addresses above, and what `loginUrl` writes, `safeNext` reads back.
 - **Views** (queried by role and label, never by class name; Radix needs `ResizeObserver`, pointer capture and `scrollIntoView` stubbed once in the test setup under jsdom): login (right and wrong password, `503`, return to the page asked for); the chat view (the memory list appears before the text, text is appended, `done` attaches the stored id, an `error` event shows its message, `409` and `413` are mapped, Enter and Shift+Enter, the composer is locked during a reply, the counter and the limit); a new chat is created on the first send and not before; the chat list; the memory list (a status tab asks for that status, load more, the filter, no edit controls).
 - **Safety:** a `<script>` in a reply is shown as text, a `javascript:` link is not a link, a memory's text is not rendered as Markdown.
 - **Backend** (`pytest`, no key): the ids are stored on the reply that ends a turn and on no other, old rows without them still load, the provider input does not contain them, `GET /sessions/{id}/messages` returns them resolved, a deleted memory comes back without its text, a replaced one with it, and a user message has an empty list.
