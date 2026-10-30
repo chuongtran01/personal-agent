@@ -98,14 +98,54 @@ test("following a chat in the drawer closes it", async () => {
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });
 
-test("logging out forgets the token and every chat held in the browser, then goes to login", async () => {
+// While the menu is open the rest of the page is hidden from assistive technology, the button too
+const account = () => screen.getByRole("button", { name: "Owner", hidden: true });
+
+test("who is signed in is a button at the bottom of the sidebar, with a menu that starts closed", () => {
+  render(<AppShell>x</AppShell>);
+
+  expect(account()).toHaveAttribute("aria-haspopup", "menu");
+  expect(account()).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: "Log out" })).not.toBeInTheDocument();
+});
+
+test("clicking it opens the menu, and Escape closes it without signing out", async () => {
+  setToken("abc", 60);
+  render(<AppShell>x</AppShell>);
+
+  await userEvent.click(account());
+
+  const menu = await screen.findByRole("menu");
+  expect(account()).toHaveAttribute("aria-expanded", "true");
+  expect(within(menu).getByText("Owner")).toBeInTheDocument();
+  expect(within(menu).getByRole("menuitem", { name: "Log out" })).toBeInTheDocument();
+
+  await userEvent.keyboard("{Escape}");
+
+  await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+  expect(getToken()).toBe("abc");
+  expect(nav.router.replace).not.toHaveBeenCalled();
+});
+
+test("the menu opens from the keyboard too", async () => {
+  render(<AppShell>x</AppShell>);
+  account().focus();
+
+  await userEvent.keyboard("{Enter}");
+
+  expect(await screen.findByRole("menuitem", { name: "Log out" })).toBeInTheDocument();
+});
+
+test("Log out in the menu forgets the token and every chat held in the browser, then goes to login", async () => {
   setToken("abc", 60);
   await loadChat("c1");
   await refreshChatList();
   expect(getChat("c1").messages).toHaveLength(1);
   render(<AppShell>x</AppShell>);
 
-  await userEvent.click(screen.getByRole("button", { name: "Log out" }));
+  await userEvent.click(account());
+  await userEvent.click(await screen.findByRole("menuitem", { name: "Log out" }));
 
   expect(getToken()).toBeNull();
   expect(getChat("c1").messages).toEqual([]);
