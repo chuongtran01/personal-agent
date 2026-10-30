@@ -19,7 +19,7 @@ The evals are the spec again: the agent eval cases are written before the loop t
 - [x] **Recall**: `backend/app/memory/recall.py`, plus a `history` mode in `search()`. Builds the query from the conversation, calls `search()` with the clock (twice for a past-tense question, the second time in history mode) and returns the current and past memories to show. It writes nothing; `mark_used` in the same file sets `last_used_at`, and the loop calls it for what went into the prompt
 - [x] **Prompt**: `backend/app/agent/prompt.py`. The system prompt, rebuilt every turn with the date and the recalled memories as labelled data
 - [x] **Agent loop**: `backend/app/agent/loop.py` and `store.py` (reading and writing a chat). One owner message in, a stream of events out; recalls (with a history pass when the message asks about the past), calls the model, stores every message, stops at a step limit
-- [ ] **API**: `backend/app/api/`. Sessions, the streaming message endpoint, and a read-only memory list
+- [x] **API**: `backend/app/api/`. Sessions, the streaming message endpoint (`sse.py`), and a read-only memory list
 - [ ] **Agent eval runner**: `evals/agent_eval.py` and the pure checks in `evals/agent_checks.py` (`make eval-agent`). Runs each case through the real loop on freshly seeded memories, with `--memory on|off`, and reports pass rates, latency and tokens
 - [ ] **Repeat runs**: `--repeat N` plays each case N times; the results file has one entry per run and the report lists the flaky cases
 - [ ] **Tests**: `backend/tests/`. Login and scoping of every endpoint, recall, the prompt, the loop with a fake model, streaming and size limits. None needs an API key
@@ -102,7 +102,20 @@ Rules the loop keeps:
 | `GET /memories` | The memories with their status, kind, dates and source; read-only, optionally by `status` |
 | `GET /health` | As before |
 
-Every endpoint but login and health needs the token. The memory list is read-only here; editing and deleting are part of the write path in phase 5.
+Every endpoint but login and health needs the token (a test walks the OpenAPI document, so a new route that forgets it fails). The memory list is read-only here, newest first, every status unless `status` is given, without the embedding; editing and deleting are part of the write path in phase 5.
+
+**The message endpoint.** `start()` runs inside the request, so a message that cannot be taken is a plain JSON error before any stream opens, with the loop's code in `detail.code`: `404 session_not_found`, `422 empty_message`, `413 message_too_long`, `409 chat_full` and `409 turn_in_progress`. Once taken, the turn runs in a background task that writes its events to a queue, and the response reads the queue as server-sent events:
+
+| Event | Data |
+| --- | --- |
+| `memory` | `current` and `past`: the memories that went into the prompt, each `{id, kind, content, valid_from, valid_until}` |
+| `text` | `{text}`, one per chunk of the reply |
+| `done` | `{message_id, input_tokens, output_tokens, steps, recall_seconds, total_seconds}` |
+| `error` | `{code, message}`: `recall_failed`, `model_error`, `step_limit`, `history_unreadable` or `internal_error` |
+
+Because the turn is a task and not part of the response, a client that closes the connection does not stop it: the answer is still stored, and the chat is given back when the task ends. The owner can reload and find the reply. `GET /sessions/{id}/messages` shows the owner's messages and the agent's answers and leaves out tool calls and their results. With no `OPENAI_API_KEY` the server still starts, and the message endpoint answers `503`.
+
+**One worker.** The one-turn-per-chat lock lives in the memory of the process, which is correct for one `async` worker and not for several: each would hold its own set. Run a single worker. Scaling out would move the lock into Postgres (an advisory lock on the chat id) behind the same `start()` and `close()`.
 
 ## Owner login
 
