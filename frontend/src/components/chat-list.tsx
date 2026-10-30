@@ -30,7 +30,7 @@ export function ChatList() {
   }, []);
 
   return (
-    <SidebarGroup>
+    <SidebarGroup className="group-data-[collapsible=icon]:hidden">
       <SidebarGroupLabel>Recents</SidebarGroupLabel>
       <SidebarGroupContent>
         {items === null && !error && (

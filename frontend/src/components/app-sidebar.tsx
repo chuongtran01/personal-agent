@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronsUpDown, LogOut, SquarePen, User } from "lucide-react";
+import { Brain, ChevronsUpDown, LogOut, MessageSquare, SquarePen, User } from "lucide-react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 
@@ -28,11 +28,14 @@ import {
 } from "@/components/ui/sidebar";
 import { resetStore } from "@/lib/chat-store";
 
-/** The app name, a New chat entry, the recent chats, and who is signed in. */
+/**
+ * The app name, a New chat entry, the recent chats, and who is signed in. Folded, it stays as a
+ * narrow strip of icons (the mark, New chat, Chats, the account) and the page keeps its place.
+ */
 export function AppSidebar() {
   const router = useRouter();
   const pathname = usePathname();
-  const { setOpenMobile } = useSidebar();
+  const { setOpen, setOpenMobile } = useSidebar();
 
   function signOut() {
     resetStore(); // the next owner must not see this chat's text
@@ -41,19 +44,31 @@ export function AppSidebar() {
   }
 
   return (
-    <Sidebar>
-      <SidebarHeader className="px-4 pt-4">
-        <span className="text-base font-semibold">Personal Agent</span>
+    <Sidebar collapsible="icon">
+      <SidebarHeader className="px-3 pt-4 group-data-[collapsible=icon]:px-2">
+        <div className="flex items-center gap-2 px-1 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+          <Brain className="size-5 shrink-0" aria-hidden />
+          <span className="text-base font-semibold group-data-[collapsible=icon]:hidden">
+            Personal Agent
+          </span>
+        </div>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton asChild isActive={pathname === "/"}>
+              <SidebarMenuButton asChild isActive={pathname === "/"} tooltip="New chat">
                 <Link href="/" onClick={() => setOpenMobile(false)}>
                   <SquarePen />
                   <span>New chat</span>
                 </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            {/* Only in the folded strip, where the list of chats is out of sight: it unfolds the sidebar */}
+            <SidebarMenuItem className="hidden group-data-[collapsible=icon]:block">
+              <SidebarMenuButton tooltip="Chats" onClick={() => setOpen(true)}>
+                <MessageSquare />
+                <span>Chats</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>

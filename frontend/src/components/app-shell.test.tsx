@@ -74,6 +74,28 @@ test("the sidebar can be folded away and brought back", async () => {
   expect(sidebar(container)).toHaveAttribute("data-state", "expanded");
 });
 
+test("folded, the sidebar stays as a strip of icons instead of going away", async () => {
+  const { container } = render(<AppShell>x</AppShell>);
+  expect(sidebar(container)).toHaveAttribute("data-collapsible", "");
+
+  await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+
+  // "icon" is what keeps the strip on screen; "offcanvas" would slide it out of sight
+  expect(sidebar(container)).toHaveAttribute("data-collapsible", "icon");
+  expect(screen.getByRole("link", { name: "New chat" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Owner" })).toBeInTheDocument();
+});
+
+test("the Chats icon in the folded strip unfolds the sidebar", async () => {
+  const { container } = render(<AppShell>x</AppShell>);
+  await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+  expect(sidebar(container)).toHaveAttribute("data-state", "collapsed");
+
+  await userEvent.click(screen.getByRole("button", { name: "Chats" }));
+
+  expect(sidebar(container)).toHaveAttribute("data-state", "expanded");
+});
+
 test("on a narrow screen the sidebar is a drawer behind the same button", async () => {
   setWindowWidth(500);
   render(<AppShell>x</AppShell>);
