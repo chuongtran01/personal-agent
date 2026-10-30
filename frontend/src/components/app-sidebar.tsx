@@ -55,6 +55,18 @@ export function AppSidebar() {
     router.replace("/login");
   }
 
+  const closeButton = (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="ml-auto size-8"
+      aria-label="Close sidebar"
+      onClick={toggleSidebar}
+    >
+      <PanelLeft aria-hidden />
+    </Button>
+  );
+
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="px-3 pt-3 group-data-[collapsible=icon]:px-2">
@@ -78,20 +90,16 @@ export function AppSidebar() {
           <div className="flex items-center gap-2 pl-1">
             <Brain className="size-5 shrink-0" aria-hidden />
             <span className="text-base font-semibold">Personal Agent</span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ml-auto size-8"
-                  aria-label="Close sidebar"
-                  onClick={toggleSidebar}
-                >
-                  <PanelLeft aria-hidden />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Close sidebar</TooltipContent>
-            </Tooltip>
+            {isMobile ? (
+              // In the drawer focus lands on this button when it opens, and a tooltip appearing on
+              // focus would take the first Escape, so closing the drawer would need two presses
+              closeButton
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>{closeButton}</TooltipTrigger>
+                <TooltipContent side="bottom">Close sidebar</TooltipContent>
+              </Tooltip>
+            )}
           </div>
         )}
       </SidebarHeader>

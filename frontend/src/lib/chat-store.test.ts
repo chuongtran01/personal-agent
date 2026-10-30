@@ -258,29 +258,106 @@ describe("a refused message", () => {
     expect(getChat("c1").turn).toBeNull();
   });
 
-  test("a chat that is still answering is read again once, a few seconds later", async () => {
-    vi.useFakeTimers();
-    let reads = 0;
-    routes({
-      "GET /sessions/c1/messages": () => {
-        reads++;
-        return reply(200, [stored(1, "user", "q"), stored(2, "assistant", "a")]);
-      },
-      "POST /sessions/c1/messages": () =>
-        reply(409, { detail: { code: "turn_in_progress", message: "still answering" } }),
+  describe("a chat that is still answering", () => {
+    const busy = () =>
+      reply(409, { detail: { code: "turn_in_progress", message: "still answering" } });
+
+    test("is read again every few seconds until the reply is in, and then left alone", async () => {
+      vi.useFakeTimers();
+      let reads = 0;
+      routes({
+        "GET /sessions/c1/messages": () => {
+          reads++;
+          return reply(
+            200,
+            reads < 3 ? [stored(1, "user", "q")] : [stored(1, "user", "q"), stored(2, "assistant", "a")],
+          );
+        },
+        "GET /sessions": () => reply(200, []),
+        "POST /sessions/c1/messages": busy,
+      });
+
+      await send("c1", "again");
+      expect(reads).toBe(0);
+      await vi.advanceTimersByTimeAsync(2999);
+      expect(reads).toBe(0);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(reads).toBe(1); // the answer is not there yet
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(reads).toBe(2);
+      expect(getChat("c1").messages).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(reads).toBe(3); // and now it is
+      expect(getChat("c1").messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(reads).toBe(3);
     });
 
-    await send("c1", "again");
-    await send("c1", "and again");
-    expect(reads).toBe(0);
+    test("is given up on after about two minutes, for a turn that failed and will never answer", async () => {
+      vi.useFakeTimers();
+      let reads = 0;
+      routes({
+        "GET /sessions/c1/messages": () => {
+          reads++;
+          return reply(200, [stored(1, "user", "q")]);
+        },
+        "GET /sessions": () => reply(200, []),
+        "POST /sessions/c1/messages": busy,
+      });
 
-    await vi.advanceTimersByTimeAsync(2999);
-    expect(reads).toBe(0);
-    await vi.advanceTimersByTimeAsync(2);
-    expect(reads).toBe(1);
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(reads).toBe(1);
-    expect(getChat("c1").messages).toHaveLength(2);
+      await send("c1", "again");
+      await vi.advanceTimersByTimeAsync(130_000);
+      expect(reads).toBe(40);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(reads).toBe(40);
+    });
+
+    test("is read by one poll however many times a message is refused", async () => {
+      vi.useFakeTimers();
+      let reads = 0;
+      routes({
+        "GET /sessions/c1/messages": () => {
+          reads++;
+          return reply(200, [stored(1, "user", "q"), stored(2, "assistant", "a")]);
+        },
+        "GET /sessions": () => reply(200, []),
+        "POST /sessions/c1/messages": busy,
+      });
+
+      await send("c1", "again");
+      await send("c1", "and again");
+      await send("c1", "and once more");
+      await vi.advanceTimersByTimeAsync(3001);
+
+      expect(reads).toBe(1);
+    });
+
+    test("is no longer read once the owner sends a message that is taken", async () => {
+      vi.useFakeTimers();
+      const live = liveReply();
+      let reads = 0;
+      let post = 0;
+      routes({
+        "GET /sessions/c1/messages": () => {
+          reads++;
+          return reply(200, [stored(1, "user", "q"), stored(2, "assistant", "a")]);
+        },
+        "GET /sessions": () => reply(200, []),
+        "POST /sessions/c1/messages": () => (post++ === 0 ? busy() : live.response()),
+      });
+      await send("c1", "refused"); // a poll is now waiting for its first tick
+
+      const taken = await send("c1", "taken");
+      live.push("done", DONE);
+      live.end();
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      expect(taken).toEqual({ ok: true });
+      // The one read is the history after the reply; the waiting poll was stopped and never reads
+      expect(reads).toBe(1);
+    });
   });
 
   test("an unreachable server is a network error", async () => {
@@ -366,7 +443,7 @@ describe("the chat list", () => {
 
 // Signing out -------------------------------------------------------------------------------------------
 
-test("signing out forgets every chat, the list and the waiting reload", async () => {
+test("signing out forgets every chat, the list and the polling", async () => {
   vi.useFakeTimers();
   routes({
     "GET /sessions/c1/messages": () => reply(200, [stored(1, "user", "private")]),
@@ -383,5 +460,5 @@ test("signing out forgets every chat, the list and the waiting reload", async ()
 
   expect(getChat("c1").messages).toEqual([]);
   expect(getChatList().items).toBeNull();
-  expect(calls("GET /sessions/c1/messages")).toHaveLength(1); // the reload never fired
+  expect(calls("GET /sessions/c1/messages")).toHaveLength(1); // the polling never ran
 });

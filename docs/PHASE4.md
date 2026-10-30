@@ -1,6 +1,6 @@
 # Phase 4: Web app
 
-**Status:** not started
+**Status:** done
 **Gate:** the owner can log in, chat with the agent and see which memories were recalled for each reply, in a browser
 
 ## Goal
@@ -22,7 +22,7 @@ Nothing here writes memories. The memory list is read-only; editing and deleting
 - [x] **Errors and limits**: every refusal and failure the API can give has a plain message and a way forward
 - [x] **Tests**: `frontend/src/**/*.test.tsx` and the backend tests for the stored ids. None needs an API key or a running server
 - [x] **Hooks and docs**: the pre-commit and pre-push hooks check the frontend when it changed, and the README says how to run both halves
-- [ ] **Browser check**: the gate scenario run by hand against the real API, with the results recorded in this doc
+- [x] **Browser check**: the gate scenario run by hand against the real API, with the results recorded in this doc
 
 ## Architecture
 
@@ -63,9 +63,9 @@ The pieces that decide something (`sse.ts`, `http.ts`, the error mapping) have n
 
 ## What the server adds
 
-The loop already knows which memories it recalled when it stores the reply. The final assistant message of a turn gets two optional lists, `recalled` and `recalled_past`, of memory ids. A reply stored before this phase has neither and loads as if both were empty; a reply that calls a tool and so is not the end of the turn carries nothing.
+The loop already knows which memories it recalled when it stores the reply. The final assistant message of a turn gets two optional lists, `recalled` and `recalled_past`, of memory ids. `null` means "not recorded" and an empty list means recall ran and nothing matched, and the two are kept apart: a reply stored before this phase, or one that calls a tool and so does not end its turn, has `null`.
 
-`GET /sessions/{id}/messages` then returns, with each assistant message, a `memories` list: `{id, kind, content, past, status}`, resolved when the chat is read. Memories are never overwritten (a change adds a row), so the content shown is the content the model saw. Two cases need care:
+`GET /sessions/{id}/messages` then returns, with each assistant message, a `memories` list (`null` when it was not recorded): `{id, kind, content, past, status}`, resolved when the chat is read. Memories are never overwritten (a change adds a row), so the content shown is the content the model saw. Two cases need care:
 
 - **A memory deleted since.** It is returned with `status: "deleted"` and no `content`: the owner asked for it to be forgotten, and an old reply must not bring its text back. The memory list can still show it, under its own `deleted` tab, because there the owner asks to see them.
 - **A memory replaced since.** It is returned with `status: "superseded"` and its text, and the view marks it "since replaced".
@@ -88,7 +88,7 @@ The model never sees these fields: the loop stores them, but the input sent to t
 - Scrolling follows the reply only while the owner is already at the bottom.
 - The streaming reply sits in a live region, so a screen reader hears it arrive.
 
-**Recalled memories.** Under each reply a line says how many memories were recalled for it and opens a list: the kind, the text, and for a past one the label "was true" (a memory replaced since a reply shows "since replaced", and a deleted one only that it was deleted) as a label. It is labelled "recalled" and not "used", on purpose: recall puts a memory in the prompt and cannot tell which of them the model relied on, which is also why `last_used_at` means "shown" (see `PHASE3.md`). The `memory` event arrives before the first word, so the list is there while the reply is still streaming. A reply that had no memories says "No memory matched", which is what the agent was told too.
+**Recalled memories.** Under each reply a line says how many memories were recalled for it and opens a list: the kind, the text, and for a past one the label "was true" (a memory replaced since a reply shows "since replaced", and a deleted one only that it was deleted) as a label. It is labelled "recalled" and not "used", on purpose: recall puts a memory in the prompt and cannot tell which of them the model relied on, which is also why `last_used_at` means "shown" (see `PHASE3.md`). The `memory` event arrives before the first word, so the list is there while the reply is still streaming. A reply whose recall found nothing says "No memory matched", which is what the agent was told too. An old reply, stored before recall was kept, shows no list at all: saying "No memory matched" under it would be untrue, since something did match and was not kept (the browser check found this).
 
 **Memory list.** Tabs for active (the default), replaced, deleted and all, and a box that filters what is loaded, one box for every tab. A tab asks the server for its first 100 memories when it is first shown and keeps them, so going back to a tab does not ask again, and "Load more" asks for the next 100 until a page comes back short. Each memory is a row: its kind, its text, and under it an `external` badge when the source is not the owner, a `replaced` or `deleted` badge when it is one, and a line of "Created …", "Holds from/until …" when it does not always hold, "Last shown …" or "Never shown", and "Replaced by memory n" for a replaced one. A deleted memory is shown, softened, under its own tab, where the owner asked to see it; the old replies in a chat still hide its text. "Last shown" and not "last used", for the reason given under recalled memories. Days are shown in UTC, which is how the server keeps them: a date such as "4 January 2027" is stored as that day's midnight UTC, and in a time zone west of Greenwich it would read as the 3rd. A list of rows and not a table, so it reads on a phone. There are no edit or delete controls yet.
 
@@ -115,7 +115,7 @@ The reader takes the response body and yields events. Frames end at a blank line
 - `\r\n` line endings, comment lines and an event it does not know, which are skipped;
 - a stream that ends without `done` or `error`. That is a lost connection, shown as such, and the saved turn is looked up by reloading the chat.
 
-Closing the tab or navigating away does not stop the turn on the server: the answer is still stored and the chat is given back. Coming back shows it. If the owner returns while the turn is still running, the chat shows their question with no answer, and sending another message is refused with `409 turn_in_progress`; the view says the chat is still answering and reloads the history once after a few seconds. It does not poll.
+Closing the tab or navigating away does not stop the turn on the server: the answer is still stored and the chat is given back. Coming back shows it. If the owner returns while the turn is still running, the chat shows their question with no answer, and sending another message is refused with `409 turn_in_progress`; the view says the chat is still answering and reads the history every three seconds until the reply is in, for about two minutes at most (a turn that failed leaves a question that will never be answered, so the reading has to end). A new message sent from the tab, or signing out, ends it. One read after a few seconds was not enough: the browser check showed a long reply is still running by then, and the page then sat on the question until it was refreshed by hand.
 
 **Where the reply is read.** Not by the page that sent the message. A small store outside React, keyed by chat id, sends the message, reads the stream and applies each event with the pure functions in `chat-state.ts`; the pages read it with `useSyncExternalStore`. That is what lets a new chat move to `/chats/{id}` while its first reply is still arriving, and lets the owner open another chat and come back without losing a reply in flight. When a turn ends (`done`, `error` or a lost connection) the history is read again, so the browser's guess is replaced by what the server stored: the real ids, and each memory's status as it stands now. A second message sent before that read returns is not overwritten by it. Signing out, or a refused token, empties the store, so the next owner never sees this one's text.
 
@@ -138,7 +138,7 @@ Because the answer is model output built from stored text, it is treated as untr
 | Token refused (`401`) | Back to login with "Your session has ended. Please log in again.", then back to where they were. A visitor who never signed in is sent to login with no such message |
 | `empty_message`, `message_too_long` | Prevented in the composer; if the server refuses anyway, its message |
 | `chat_full` (409) | "This chat is full. Start a new one", with a button |
-| `turn_in_progress` (409) | "Still answering the last message", then one reload of the history |
+| `turn_in_progress` (409) | "Still answering the last message", and the history is read every few seconds until the reply is in |
 | `session_not_found` (404) | Back to the chat list |
 | `error` event: `recall_failed`, `model_error`, `step_limit`, `history_unreadable`, `internal_error` | The server's plain message under the question, "not answered, send it again" |
 | The stream ends with no `done` | "The connection was lost. Reload to see whether the reply was saved" |
@@ -154,10 +154,10 @@ The frontend tests run in Vitest with Testing Library and a fake `fetch` that re
 - **Reader:** a frame split across chunks, a split multi-byte character, `\r\n`, comments, an unknown event, a final frame without its blank line, a stream that ends without `done`.
 - **Client:** the token is sent, a `401` signs out, an error body becomes its code, a network failure becomes a message.
 - **Guard and redirects:** a visitor without a token, or with an expired one, sees nothing and is sent to login with a `next` that includes the query; a reload (which hydrates server HTML) sends a signed-in owner nowhere and a visitor to login once; a token refused later does the same from wherever the owner is, and the login page says the session ended (only for that, and only for the one marker it sets); the handler is removed when the page goes; `safeNext` is tested against the addresses above, and what `loginUrl` writes, `safeNext` reads back.
-- **The store and the chat view:** the question appears at once, then the memories, then the reply as it streams; `done` makes it a message with the stored id and its memories; an error drops the half reply and keeps the question; a refused message leaves the chat as it was and keeps the text in the box; one reply at a time; a reply keeps arriving with nobody watching; a history read does not wipe a newer message; the busy-chat reload happens once; the view follows the reply only while the owner is at the bottom; a missing chat goes home; signing out empties it all.
+- **The store and the chat view:** the question appears at once, then the memories, then the reply as it streams; `done` makes it a message with the stored id and its memories; an error drops the half reply and keeps the question; a refused message leaves the chat as it was and keeps the text in the box; one reply at a time; a reply keeps arriving with nobody watching; a history read does not wipe a newer message; a busy chat is read every few seconds until its reply is in, and no longer once it is, after about two minutes, when a message is sent, or on sign-out; the view follows the reply only while the owner is at the bottom; a missing chat goes home; signing out empties it all.
 - **Views** (queried by role and label, never by class name; Radix needs `ResizeObserver`, pointer capture and `scrollIntoView` stubbed once in the test setup under jsdom): login (right and wrong password, `503`, return to the page asked for); the chat view (the memory list appears before the text, text is appended, `done` attaches the stored id, an `error` event shows its message, `409` and `413` are mapped, Enter and Shift+Enter, the composer is locked during a reply, the counter and the limit); a new chat is created on the first send and not before; the chat list; the memory list (a status tab asks for that status, load more, the filter, no edit controls).
 - **Safety:** a `<script>` in a reply is shown as text, a `javascript:` link is not a link, an image in a reply is not loaded, and neither a memory's text (in a reply's list or in the memory list) nor the owner's own message is rendered as Markdown or HTML.
-- **Backend** (`pytest`, no key): the ids are stored on the reply that ends a turn and on no other, old rows without them still load, the provider input does not contain them, `GET /sessions/{id}/messages` returns them resolved, a deleted memory comes back without its text, a replaced one with it, and a user message has an empty list.
+- **Backend** (`pytest`, no key): the ids are stored on the reply that ends a turn and on no other, an old reply says `null` (not recorded) while one whose recall found nothing says `[]`, the provider input does not contain them, `GET /sessions/{id}/messages` returns them resolved, a deleted memory comes back without its text, a replaced one with it, and a user message has an empty list.
 
 The hooks run the type check and the linter before a commit, and the type check, the tests and the production build before a push, when `frontend/` changed and `node_modules` is present, and say so when it is not. The build is there because some mistakes pass everything else: a component that uses hooks but lost its `"use client"` fails only in `next build`.
 
@@ -187,7 +187,7 @@ Open `http://localhost:3000` and log in with the password whose hash is in `OWNE
 | Wording | "Recalled", not "used" |
 | New chats | Created on the first message, not on the click |
 | Layout | A sidebar with the recent chats, and a centred composer, as in the familiar chat apps; no images, plugins, voice or other tools the reference had |
-| A turn still running after a reload | One reload of the history after a few seconds when a send is refused; no polling |
+| A turn still running after a reload | A refused send starts a bounded poll: the history every 3 s until the reply is in, about two minutes at most |
 | Retrying a failed turn | Send the text again; a retry that does not store it twice is later |
 | Where a reply is read | A store outside React, keyed by chat, so leaving the page never drops a reply in flight |
 | The message box while a reply arrives | Stays editable, Send is locked |
@@ -210,6 +210,37 @@ Open `http://localhost:3000` and log in with the password whose hash is in `OWNE
 | Layout and keyboard | Usable at phone width (the chat list is a drawer), light and dark both readable, and the whole flow works with the keyboard alone: login, chat list, send, expand the memories, switch tabs, with a visible focus and a drawer that traps it |
 | Tests | `make web-test` and `pytest` pass with no API key and no server |
 | Phase 3 | The agent eval baseline is unchanged: the stored ids are not in the prompt |
+
+## Browser check
+
+Run on 30 October 2026 against the real API and the real model, in Chrome, driven by scripts (`puppeteer-core`, kept out of the repo) that act as the owner would: typing, clicking, pressing keys, reloading, closing a tab. The production build ran under `next start`; the dev server was checked for streaming too (a copy of `frontend/` run on its own port, since a second dev server cannot share a directory). The data conditions a check needs were set up in the throwaway `agent_eval` database and removed afterwards (a memory deleted after a reply, 130 more memories, a hostile reply, a chat from before this phase, a blank memory store, a backend with tiny limits, a backend with no model key). This is a one-off run, not an automated test; an automated browser test stays a phase 9 question.
+
+| Check | Result | What was seen |
+| --- | --- | --- |
+| Login | Pass | A wrong password gave "That password is not right." with the field kept; the right one opened the app; a reload stayed signed in; a new tab went to `/login`; logging out left nothing in `sessionStorage`, and opening `/memories` afterwards went to `/login?next=%2Fmemories` |
+| Streaming | Pass | The reply grew in steps (106, 136, 185, 212 characters over 2.1 s on the production build; 106, 210, 249, 257 over 2.9 s on the dev server), never all at once |
+| Memories recalled | Pass | "Recalled 5 memories" was on screen while the reply was still growing; after a reload the same five were listed, identical. "Where did I live before Porto?" listed 3 of 8 memories as "was true", and they survived a reload. With a blank memory store the assistant said it did not know and the page said "No memory matched", also after a reload |
+| History | Pass, with a fix | A reloaded chat read the same; a chat from before this phase opened. It first showed "No memory matched" under a reply that had in fact matched a memory: see below |
+| Forgotten and replaced | Pass | After a reply, one of its memories was deleted and another replaced. Reloading the chat showed "A memory that has since been deleted" with no text for the first, and the second with its text and "since replaced" |
+| Memory list | Pass | With 130 memories added: Active showed 100 then, after "Load more", 165 and no button; Replaced 5, Deleted 3, All 173. The text of the three deleted memories appeared only under Deleted and All. A hostile memory was shown as text |
+| Errors | Pass, with a fix | A full chat said so and offered New chat, and the message stayed in the box. A message the server refused as too long was mapped. A chat still answering said so (see below). With the API stopped the owner saw "Something went wrong. Please try again.", kept their text, and the memory list and chat list each offered "Try again" and recovered when the API came back. With no model key: "The assistant is not available: the server has no model key." An expired token went to login with "Your session has ended" and back to the page after logging in |
+| A closed tab | Pass | The tab was closed after 119 characters of a long reply; coming back after 14 s showed the whole saved answer (1,201 characters) |
+| Safe rendering | Pass | In a stored reply holding a `<script>`, a `javascript:` link, an image and an `onerror`: no script, image or link element, `window.__pwned` never set, real `**bold**` kept, the rest shown as text |
+| Layout and keyboard | Pass, with a fix | Text contrast was at least 4.74 (light) and 5.86 (dark) over 211 samples on three pages. On a phone the chat list is a drawer that kept focus inside it for 18 Tab presses. By keyboard alone: login, send, Tab to Memories and open it, switch the tabs with the arrow keys, open and close the recalled memories with Space, each stop with a visible focus. Escape needed a fix (below) |
+| Tests | Pass | `pytest` 470 and `make web-test` 354, with no API key and no server |
+| Phase 3 | Pass | `make eval-agent` on dev, memory on: 35 of 36, the same single miss (`a003`), zero leaks, 490 input tokens a message, as in the baseline |
+
+**What the check found, and what was done**
+
+- **An old reply claimed nothing had matched.** A reply stored before recalls were kept came back from the API as an empty list, the same as a reply whose recall found nothing, so the page said "No memory matched" under an answer that had matched a memory. The API now says `null` for "not recorded" and `[]` for "nothing matched", and the page shows nothing under an old reply.
+- **One reload after a refused send was not enough.** A long reply was still running three seconds later, so the page sat on the question until it was refreshed by hand. A refused send now starts a bounded poll (the history every three seconds, about two minutes at most), which a new message or signing out ends. This replaces the "no polling" decision.
+- **Escape did not close the phone drawer, and focus was lost.** Focus lands on "Close sidebar" when the drawer opens, its tooltip appeared on focus, and the first Escape only dismissed the tooltip. The drawer's button has no tooltip now, and focus returns to the menu button when the drawer closes.
+
+**What it showed and left as it is**
+
+- With the API stopped behind a running Next server, the message is the generic "Something went wrong. Please try again." The "Cannot reach the server" wording is for when Next itself is unreachable.
+- A first message in a new chat that the server then refuses leaves an empty chat in the list, as noted under Chats. There is still no way to delete a chat.
+- The sidebar's chat list comes before the page in the tab order, so a keyboard user on a long list tabs through it to reach the composer, except where the composer takes focus by itself (a new chat and an opened chat do).
 
 ## Not in this phase
 

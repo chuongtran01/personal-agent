@@ -7,7 +7,12 @@ import type { ActiveTurn } from "@/lib/chat-state";
 
 import { MessageList } from "./message-list";
 
-const message = (id: number, role: "user" | "assistant", text: string, memories: ChatMessage["memories"] = []): ChatMessage => ({
+const message = (
+  id: number,
+  role: "user" | "assistant",
+  text: string,
+  memories: ChatMessage["memories"] = [],
+): ChatMessage => ({
   id,
   role,
   text,
@@ -64,6 +69,21 @@ describe("the conversation", () => {
 
     expect(screen.getAllByRole("button", { name: /Recalled 1 memory/ })).toHaveLength(1);
     expect(screen.getAllByText("No memory matched")).toHaveLength(1);
+  });
+});
+
+describe("what a reply recalled, when that was not kept", () => {
+  test("an old reply, stored before recall was kept, shows no list and does not claim nothing matched", () => {
+    view([message(1, "user", "Who is my manager?"), message(2, "assistant", "Helena Rocha.", null)]);
+
+    expect(screen.queryByText("No memory matched")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Recalled/ })).not.toBeInTheDocument();
+  });
+
+  test("a reply whose recall found nothing does say so", () => {
+    view([message(1, "user", "q"), message(2, "assistant", "I do not know.", [])]);
+
+    expect(screen.getByText("No memory matched")).toBeInTheDocument();
   });
 });
 

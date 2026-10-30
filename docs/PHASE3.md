@@ -1,6 +1,6 @@
 # Phase 3: Agent loop and API
 
-**Status:** not started
+**Status:** done
 **Gate:** a fact in memory is used in a new session without being asked, memory on beats memory off, and no memory that may not be used ever reaches the prompt
 
 ## Goal

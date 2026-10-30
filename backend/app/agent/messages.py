@@ -33,10 +33,12 @@ class AssistantMessage(_Frozen):
     role: Literal["assistant"] = "assistant"
     text: str
     tool_calls: tuple[ToolCall, ...] = ()
-    # The memories recalled for the turn this message ends, kept so a chat can show them later.
-    # Only the reply that ends a turn carries them, and they never go to the model
-    recalled: tuple[int, ...] = ()
-    recalled_past: tuple[int, ...] = ()
+    # The memories recalled for the turn this message ends, kept so a chat can show them later, and
+    # never sent to the model. None means "not recorded": a reply stored before recall was kept, or
+    # one that does not end its turn. An empty tuple means recall ran and nothing matched, and the
+    # two must not be mixed up, or an old reply would be shown as having matched nothing
+    recalled: tuple[int, ...] | None = None
+    recalled_past: tuple[int, ...] | None = None
 
 
 class ToolResultMessage(_Frozen):

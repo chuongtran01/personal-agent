@@ -80,7 +80,7 @@ def ids(results):
 def bare(message):
     """A stored reply without the ids of what was recalled for it."""
     if isinstance(message, AssistantMessage):
-        return message.model_copy(update={"recalled": (), "recalled_past": ()})
+        return message.model_copy(update={"recalled": None, "recalled_past": None})
     return message
 
 
@@ -102,7 +102,9 @@ async def test_a_turn_recalls_prompts_streams_and_stores_the_answer(session_fact
     assert isinstance(events[-1], AgentDone)
     assert await stored(session_factory, chat) == [
         UserMessage(text="Where does the owner live? Porto"),
-        AssistantMessage(text="You live in Porto.", recalled=ids(events[0].current)),
+        AssistantMessage(
+            text="You live in Porto.", recalled=ids(events[0].current), recalled_past=()
+        ),
     ]
     (call,) = llm.calls
     assert "lives in Porto" in call.system
@@ -342,7 +344,7 @@ async def test_a_retryable_failure_before_any_output_is_retried_once(session_fac
 
     assert len(llm.calls) == 2
     assert isinstance(events[-1], AgentDone)
-    assert (await stored(session_factory, chat))[-1] == AssistantMessage(text="worked")
+    assert bare((await stored(session_factory, chat))[-1]) == AssistantMessage(text="worked")
 
 
 async def test_a_retryable_failure_twice_ends_the_turn_with_an_error(session_factory, chat):
@@ -580,7 +582,7 @@ async def test_only_the_reply_that_ends_the_turn_carries_the_recall(session_fact
     events = await play(loop, chat, "Where does the owner live? Porto")
 
     _, asked, _, answer = await stored(session_factory, chat)
-    assert asked.tool_calls and asked.recalled == () and asked.recalled_past == ()
+    assert asked.tool_calls and asked.recalled is None and asked.recalled_past is None
     assert answer.recalled == ids(events[0].current)
 
 
@@ -592,4 +594,18 @@ async def test_with_recall_off_the_reply_records_nothing(session_factory, seeded
     )
 
     answer = (await stored(session_factory, chat))[-1]
+    assert answer.recalled == () and answer.recalled_past == ()
+
+
+async def test_a_turn_that_recalls_nothing_records_an_empty_list_not_that_it_was_not_recorded(
+    session_factory, chat
+):
+    # No memories are seeded, so recall finds nothing: "nothing matched" is a fact worth keeping,
+    # and it must stay apart from "not recorded", which is what an old reply has
+    events = await play(
+        make_loop(session_factory, ScriptedLLM(reply("I do not know."))), chat, "anything at all"
+    )
+
+    answer = (await stored(session_factory, chat))[-1]
+    assert events[0].current == () and events[0].past == ()
     assert answer.recalled == () and answer.recalled_past == ()

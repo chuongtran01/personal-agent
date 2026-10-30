@@ -27,12 +27,17 @@ export interface ChatListState {
 
 export type SendResult = { ok: true } | { ok: false; error: ApiError };
 
-const RELOAD_AFTER_BUSY_MS = 3000;
+// A chat the server says is still answering is read again every few seconds until the reply is in,
+// for about two minutes at most: longer than a turn can take, so a chat whose turn failed (and so
+// will never get a reply) stops being read
+const BUSY_POLL_MS = 3000;
+const BUSY_POLL_LIMIT = 40;
 
 const chats = new Map<string, ChatState>();
 let list: ChatListState = { items: null, error: null };
 const listeners = new Set<() => void>();
-const reloads = new Map<string, ReturnType<typeof setTimeout>>();
+const polling = new Set<string>();
+const pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function emit() {
   listeners.forEach((listener) => listener());
@@ -61,8 +66,9 @@ function setChat(id: string, state: ChatState) {
 export function resetStore() {
   chats.clear();
   list = { items: null, error: null };
-  reloads.forEach(clearTimeout);
-  reloads.clear();
+  polling.clear();
+  pollTimers.forEach(clearTimeout);
+  pollTimers.clear();
   emit();
 }
 
@@ -99,15 +105,30 @@ async function settle(id: string) {
   await refreshChatList();
 }
 
-function reloadOnceLater(id: string) {
-  if (reloads.has(id)) return;
-  reloads.set(
-    id,
-    setTimeout(() => {
-      reloads.delete(id);
-      void loadChat(id);
-    }, RELOAD_AFTER_BUSY_MS),
-  );
+function stopPolling(id: string) {
+  polling.delete(id);
+  clearTimeout(pollTimers.get(id));
+  pollTimers.delete(id);
+}
+
+/** Read the history every few seconds until the reply, that another window or a reload left running, is in. */
+function pollUntilAnswered(id: string) {
+  // No second poll can start: send() stops any poll before it runs, and refuses to run twice at once
+  polling.add(id);
+  let tries = 0;
+  const tick = async () => {
+    pollTimers.delete(id);
+    tries += 1;
+    await loadChat(id);
+    if (!polling.has(id)) return; // stopped while reading: a new message, or signing out
+    if (getChat(id).messages.at(-1)?.role === "assistant" || tries >= BUSY_POLL_LIMIT) {
+      polling.delete(id);
+      void refreshChatList();
+      return;
+    }
+    pollTimers.set(id, setTimeout(tick, BUSY_POLL_MS));
+  };
+  pollTimers.set(id, setTimeout(tick, BUSY_POLL_MS));
 }
 
 // Sending ------------------------------------------------------------------------------------------
@@ -139,6 +160,7 @@ export async function send(id: string, text: string): Promise<SendResult> {
   const before = getChat(id);
   if (isBusy(before)) return { ok: false, error: new ApiError(409, "turn_in_progress", "still answering") };
 
+  stopPolling(id); // the owner is sending now; a refusal starts the polling again
   setChat(id, startTurn(before, text, new Date()));
   let turn: AsyncGenerator<StreamEvent>;
   try {
@@ -146,7 +168,7 @@ export async function send(id: string, text: string): Promise<SendResult> {
   } catch (error) {
     setChat(id, refuseTurn(getChat(id)));
     const refusal = asApiError(error);
-    if (refusal.code === "turn_in_progress") reloadOnceLater(id);
+    if (refusal.code === "turn_in_progress") pollUntilAnswered(id);
     return { ok: false, error: refusal };
   }
   void pump(id, turn);

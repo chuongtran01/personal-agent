@@ -46,7 +46,8 @@ class MessageOut(BaseModel):
     role: Literal["user", "assistant"]
     text: str
     created_at: datetime
-    memories: list[RecalledOut]
+    # None for a reply stored before recall was kept: "not recorded", which is not "nothing matched"
+    memories: list[RecalledOut] | None
 
 
 class SendRequest(BaseModel):
@@ -102,7 +103,7 @@ async def messages(
         memory_id
         for row in shown
         if isinstance(row.message, AssistantMessage)
-        for memory_id in (*row.message.recalled, *row.message.recalled_past)
+        for memory_id in (*(row.message.recalled or ()), *(row.message.recalled_past or ()))
     }
     found = await store.recalled_memories(db, wanted)
     return [MessageOut(**_view(row, found)) for row in shown]
@@ -110,27 +111,31 @@ async def messages(
 
 def _view(row: store.StoredRow, found: dict[int, store.RecalledMemory]) -> dict:
     message = row.message
-    memories: list[RecalledOut] = []
-    if isinstance(message, AssistantMessage):
-        for past, ids in ((False, message.recalled), (True, message.recalled_past)):
-            for memory_id in ids:
-                if memory := found.get(memory_id):
-                    memories.append(
-                        RecalledOut(
-                            id=memory.id,
-                            kind=memory.kind,
-                            content=None if memory.status == "deleted" else memory.content,
-                            past=past,
-                            status=memory.status,
-                        )
-                    )
-    return {
+    view = {
         "id": row.id,
         "role": message.role,
         "text": message.text,
         "created_at": row.created_at,
-        "memories": memories,
+        "memories": [],
     }
+    if not isinstance(message, AssistantMessage):
+        return view
+    if message.recalled is None and message.recalled_past is None:
+        view["memories"] = None  # not recorded, which is not the same as nothing matched
+        return view
+    for past, ids in ((False, message.recalled or ()), (True, message.recalled_past or ())):
+        for memory_id in ids:
+            if memory := found.get(memory_id):
+                view["memories"].append(
+                    RecalledOut(
+                        id=memory.id,
+                        kind=memory.kind,
+                        content=None if memory.status == "deleted" else memory.content,
+                        past=past,
+                        status=memory.status,
+                    )
+                )
+    return view
 
 
 @router.post("/{session_id}/messages")

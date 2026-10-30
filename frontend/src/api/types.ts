@@ -27,7 +27,8 @@ export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   created_at: string;
-  memories: RecalledMemory[];
+  /** null for a reply stored before recall was kept: not recorded, which is not "nothing matched" */
+  memories: RecalledMemory[] | null;
 }
 
 export interface ChatSummary {

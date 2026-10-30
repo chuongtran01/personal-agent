@@ -177,11 +177,7 @@ async def test_a_second_message_sees_the_first_turn(client, chat, agent_for):
     await client.post(f"/sessions/{chat}/messages", json={"text": "first"})
     await client.post(f"/sessions/{chat}/messages", json={"text": "second"})
 
-    assert llm.calls[1].messages == (
-        UserMessage(text="first"),
-        AssistantMessage(text="one"),
-        UserMessage(text="second"),
-    )
+    assert [m.text for m in llm.calls[1].messages] == ["first", "one", "second"]
 
 
 @pytest.mark.parametrize(
@@ -352,7 +348,7 @@ async def test_a_memory_replaced_since_keeps_its_text_and_says_so(
     assert replaced["status"] == "superseded" and replaced["content"] == target["content"]
 
 
-async def test_a_reply_stored_before_recalls_were_kept_shows_no_memories(
+async def test_a_reply_stored_before_recalls_were_kept_says_they_were_not_recorded(
     client, chat, session_factory
 ):
     async with session_factory() as db:
@@ -360,9 +356,23 @@ async def test_a_reply_stored_before_recalls_were_kept_shows_no_memories(
         await store.append(db, sid, UserMessage(text="hi"))
         await store.append(db, sid, AssistantMessage(text="hello"))
 
-    shown = (await client.get(f"/sessions/{chat}/messages")).json()
+    user, answer = (await client.get(f"/sessions/{chat}/messages")).json()
 
-    assert [m["memories"] for m in shown] == [[], []]
+    # null is "not recorded", which a client must not show as "nothing matched"
+    assert user["memories"] == [] and answer["memories"] is None
+
+
+async def test_a_reply_whose_recall_found_nothing_says_so_with_an_empty_list(
+    client, chat, session_factory
+):
+    async with session_factory() as db:
+        sid = uuid.UUID(chat)
+        await store.append(db, sid, UserMessage(text="hi"))
+        await store.append(db, sid, AssistantMessage(text="hello", recalled=(), recalled_past=()))
+
+    answer = (await client.get(f"/sessions/{chat}/messages")).json()[-1]
+
+    assert answer["memories"] == []
 
 
 async def test_an_id_that_no_longer_resolves_is_left_out(client, chat, session_factory):
@@ -396,7 +406,7 @@ async def test_a_turn_nobody_reads_still_stores_the_answer_and_frees_the_chat(
     await asyncio.gather(*tasks)
 
     async with session_factory() as db:
-        assert (await store.load(db, sid))[-1] == AssistantMessage(text="done anyway")
+        assert (await store.load(db, sid))[-1].text == "done anyway"
     await loop.start(sid, "again")  # not refused: the chat was given back
     assert not tasks
 

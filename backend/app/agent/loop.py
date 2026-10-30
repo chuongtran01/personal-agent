@@ -268,8 +268,8 @@ class AgentLoop:
                 text=text,
                 tool_calls=tuple(calls),
                 # Only the reply that ends the turn says what was recalled for it
-                recalled=() if calls else tuple(r.memory_id for r in recalled.current),
-                recalled_past=() if calls else tuple(r.memory_id for r in recalled.past),
+                recalled=None if calls else tuple(r.memory_id for r in recalled.current),
+                recalled_past=None if calls else tuple(r.memory_id for r in recalled.past),
             )
             async with self._sessions() as db:
                 message_id = await store.append(db, turn.session_id, reply)

@@ -152,6 +152,32 @@ test("on a narrow screen the page has a menu button, and the sidebar is a drawer
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });
 
+test("Escape closes the drawer with one press, and focus goes back to the menu button", async () => {
+  setWindowWidth(500);
+  render(<AppShell>x</AppShell>);
+  await userEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
+  await screen.findByRole("dialog");
+
+  await userEvent.keyboard("{Escape}");
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "Open sidebar" })).toHaveFocus();
+});
+
+test("the drawer's close button has no tooltip to dismiss first, which would eat the first Escape", async () => {
+  setWindowWidth(500);
+  render(<AppShell>x</AppShell>);
+  await userEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
+  const drawer = await screen.findByRole("dialog");
+  const close = within(drawer).getByRole("button", { name: "Close sidebar" });
+
+  close.focus();
+  await userEvent.hover(close);
+  await new Promise((resolve) => setTimeout(resolve, 900)); // longer than a tooltip waits to appear
+
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+});
+
 test("following a chat in the drawer closes it", async () => {
   setWindowWidth(500);
   render(<AppShell>x</AppShell>);

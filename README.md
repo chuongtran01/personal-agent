@@ -4,7 +4,7 @@ A personal assistant for one person that **remembers**. It keeps facts, preferen
 
 No agent framework: the loop, the memory and the rules are written by hand, so every step is visible and testable. Rules live in code, not in the prompt. Evals are written before the code they measure.
 
-> **Work in progress.** It is built in phases, each ending in a gate that has to pass before the next starts. Phases 1 to 3 are done; phase 4 (the web app) is under way. The plan is in [`docs/DESIGN.md`](docs/DESIGN.md).
+> **Work in progress.** It is built in phases, each ending in a gate that has to pass before the next starts. Phases 1 to 4 are done; phase 5 (memory writes) is next. The plan is in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Status
 
@@ -13,7 +13,7 @@ No agent framework: the loop, the memory and the rules are written by hand, so e
 | 1 | Foundation: schema, Docker Compose, eval harness skeleton | done |
 | 2 | Memory store and retrieval: keyword, vector and hybrid search with recency | done |
 | 3 | Agent loop and API: recall before each reply, owner login, streaming API, agent evals | done |
-| 4 | Web app: login, chats, streaming chat view, recalled memories, memory list | in progress (login, chats and the memory list are built) |
+| 4 | Web app: login, chats, streaming chat view, recalled memories, memory list | done |
 | 5 | Memory writes: extraction, update, forget | planned |
 | 6 to 7 | Calendar and email over MCP, writes with confirmation | planned |
 | 8 | Chat compaction | planned |

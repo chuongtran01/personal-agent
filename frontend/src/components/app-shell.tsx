@@ -1,7 +1,7 @@
 "use client";
 
 import { Menu } from "lucide-react";
-import { Suspense, type ReactNode } from "react";
+import { Suspense, useEffect, useRef, type ReactNode } from "react";
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
@@ -13,11 +13,21 @@ import { TooltipProvider } from "@/components/ui/tooltip";
  * to open it. On a wide screen the sidebar carries its own toggle and the page has no bar at all.
  */
 function PhoneBar() {
-  const { isMobile, toggleSidebar } = useSidebar();
+  const { isMobile, openMobile, toggleSidebar } = useSidebar();
+  const button = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(false);
+
+  // The drawer is opened from this button but does not know that, so it cannot hand focus back when
+  // it closes: without this, focus falls to the page and a keyboard user is lost
+  useEffect(() => {
+    if (wasOpen.current && !openMobile) button.current?.focus();
+    wasOpen.current = openMobile;
+  }, [openMobile]);
+
   if (!isMobile) return null;
   return (
     <header className="flex h-12 shrink-0 items-center px-3">
-      <Button variant="ghost" size="icon" aria-label="Open sidebar" onClick={toggleSidebar}>
+      <Button ref={button} variant="ghost" size="icon" aria-label="Open sidebar" onClick={toggleSidebar}>
         <Menu aria-hidden />
       </Button>
     </header>

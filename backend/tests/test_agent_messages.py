@@ -74,10 +74,23 @@ def test_messages_are_frozen():
         message.text = "changed"
 
 
-def test_a_reply_stored_before_recalls_were_kept_loads_with_none():
+def test_a_reply_stored_before_recalls_were_kept_loads_as_not_recorded():
     old_row = {"text": "In Porto.", "tool_calls": []}
 
-    assert from_row("assistant", old_row) == AssistantMessage(text="In Porto.")
+    reply = from_row("assistant", old_row)
+
+    assert reply == AssistantMessage(text="In Porto.")
+    assert reply.recalled is None and reply.recalled_past is None
+
+
+def test_not_recorded_and_nothing_matched_are_kept_apart():
+    not_recorded = AssistantMessage(text="x")
+    nothing_matched = AssistantMessage(text="x", recalled=(), recalled_past=())
+
+    assert from_row(*to_row(not_recorded)).recalled is None
+    assert from_row(*to_row(nothing_matched)).recalled == ()
+    assert to_row(not_recorded)[1]["recalled"] is None
+    assert to_row(nothing_matched)[1]["recalled"] == []
 
 
 def test_the_recalled_ids_are_stored_as_plain_numbers():
