@@ -56,3 +56,14 @@ async def session(test_database_url):
         tables = ", ".join(Base.metadata.tables)
         await connection.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
     await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def session_factory(test_database_url):
+    """For code that opens its own short sessions, as the agent loop does."""
+    engine = create_async_engine(test_database_url)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        tables = ", ".join(Base.metadata.tables)
+        await connection.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+    await engine.dispose()

@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     recall_limit: int = 5
     recall_history_limit: int = 3
 
+    # Limits on a turn (docs/PHASE3.md): model calls per message, characters per message, stored
+    # messages per chat
+    agent_max_steps: int = 6
+    max_message_chars: int = 4000
+    max_session_messages: int = 100
+
     # Who the agent talks to: the name is optional, the time zone decides what "today" is
     owner_name: str = ""
     owner_timezone: str = "UTC"
