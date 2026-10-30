@@ -133,7 +133,7 @@ curl -N localhost:8000/sessions/$SID/messages -H "authorization: Bearer $TOKEN" 
   -H 'content-type: application/json' -d '{"text":"Where do I live?"}'
 ```
 
-`-N` keeps curl from buffering, so the `memory` and `text` events print as they arrive. The agent evals are the main way to judge behavior. The web app in phase 4 is a client of this same API; because `POST` streaming cannot use the browser's `EventSource`, it will read the response with `fetch`, and the API needs a `CORS_ORIGINS` setting then (not before).
+`-N` keeps curl from buffering, so the `memory` and `text` events print as they arrive. The agent evals are the main way to judge behavior. The web app in phase 4 is a client of this same API; because `POST` streaming cannot use the browser's `EventSource`, it will read the response with `fetch`, and reach the API through the dev server's proxy, so no CORS setting is needed (see `PHASE4.md`).
 
 ## Agent evals
 

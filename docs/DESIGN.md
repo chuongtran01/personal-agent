@@ -161,7 +161,7 @@ Eleven phases, each ending in a gate that must pass before the next starts. Docs
 | 1 | Foundation | Repo, Docker Compose, schema, backend stub, memory traps file, eval harness skeleton | Schema loads, `/health` ok |
 | 2 | Memory store and retrieval | `memories` table, embedding, hybrid search with recency, retrieval evals on a hand-written set | recall@5 baseline set |
 | 3 | Agent loop and API | Loop with recall before each call, sessions, owner login, streaming API, agent evals with a memory-off arm | A stored fact is used in a new session without being asked, memory on beats memory off, nothing that may not be used reaches the prompt |
-| 4 | Web app | Login, chat list, streaming chat view, "memories used" under each reply, read-only memory list | The owner can log in, chat and see which memories were used, in a browser |
+| 4 | Web app | Login, chat list, streaming chat view, recalled memories under each reply (stored with the reply, so a reload shows them), read-only memory list | The owner can log in, chat and see which memories were recalled, in a browser |
 | 5 | Memory writes | Extraction, reconciliation, supersede and forget, `memory_events`, trap evals, edit and delete in the web app's memory list, and the agent eval resets the memories before every case (phase 3 seeds once per run, which is only safe while cases cannot write) | A fact stated in one session is used in the next; update, forgetting and false-memory evals run |
 | 6 | Read tools over MCP | MCP client, calendar and email read servers, token per call | Read scenarios pass, injection evals on emails run |
 | 7 | Writes with confirmation | Create and send tools, the confirmation gate, idempotency keys, `unknown` handling | No outside write without a matching confirmation |

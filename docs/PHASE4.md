@@ -1,0 +1,208 @@
+# Phase 4: Web app
+
+**Status:** not started
+**Gate:** the owner can log in, chat with the agent and see which memories were recalled for each reply, in a browser
+
+## Goal
+
+Give the API a face. By the end, the owner opens a page, logs in with the password, sees their chats, talks to the agent and watches the reply stream in, sees under each reply which memories were recalled for it (including the ones that were true once and are not any more), and browses the memory list. The web app is a client of the API built in phase 3 and adds no logic of its own: recall, the prompt, the limits and the login all stay on the server.
+
+One piece of the server changes. Today the recalled memories are sent once, in the `memory` event, and then forgotten, so a reloaded chat would show replies with no memories under them. This phase stores the recalled ids with the reply and returns them with the chat, so the view after a reload matches the view while it streamed.
+
+Nothing here writes memories. The memory list is read-only; editing and deleting are part of the write path in phase 5, and the controls for them are added then.
+
+## Deliverables
+
+- [ ] **Recalled memories stored with the reply**: `backend/app/agent/messages.py`, `loop.py`, `store.py` and `api/sessions.py`. The reply that ends a turn carries the ids recalled for it, and `GET /sessions/{id}/messages` returns them resolved (kind, content, whether the memory is a past one, its status today). The model never sees these fields
+- [ ] **Frontend scaffold**: `frontend/`. Vite, React and TypeScript, Tailwind CSS and shadcn/ui (set up with its CLI, the components copied into `src/components/ui/`), a dev proxy to the API, ESLint and the type check, Vitest with Testing Library, and `make web`, `make web-test` and `make web-build`
+- [ ] **API client and event reader**: `frontend/src/api/`. A typed `fetch` wrapper that adds the token and turns errors into codes, and a reader that parses the `POST` stream into events. Built first, against a stream recorded from the real API
+- [ ] **Login**: the password form, the token kept for the tab, and the way back to login when the token is missing or refused
+- [ ] **Chats**: the chat list, a new chat and the streaming chat view, with the recalled memories under each reply
+- [ ] **Memory list**: read-only, by status, with the dates, the source and what replaced what
+- [ ] **Errors and limits**: every refusal and failure the API can give has a plain message and a way forward
+- [ ] **Tests**: `frontend/src/**/*.test.tsx` and the backend tests for the stored ids. None needs an API key or a running server
+- [ ] **Hooks and docs**: the pre-commit and pre-push hooks check the frontend when it changed, and the README says how to run both halves
+- [ ] **Browser check**: the gate scenario run by hand against the real API, with the results recorded in this doc
+
+## Architecture
+
+```
+browser (Vite dev server, same origin)
+  /api/*  --proxy-->  FastAPI on :8000   (the /api prefix is dropped)
+
+login      POST /auth/login                       -> token, kept in sessionStorage
+chat list  GET  /sessions                         -> sidebar
+chat view  GET  /sessions/{id}/messages           -> history, with the recalled memories
+           POST /sessions/{id}/messages           -> SSE: memory, text..., done | error
+memories   GET  /memories?status=&limit=&offset=  -> the list
+```
+
+The browser only ever talks to its own origin and the dev server forwards `/api` to the backend, so there is no CORS setting and the token is never sent across origins. `POST` streaming cannot use `EventSource`, so the reply is read with `fetch` and a `ReadableStream`.
+
+Layout:
+
+```
+frontend/
+  src/api/         client.ts (fetch wrapper, token, error codes), sse.ts (the reader), types.ts
+  src/auth/        token storage, the guard that sends a visitor without a token to login
+  src/views/       Login, Chat, Memories
+  src/components/  ChatList, MessageList, Composer, RecalledMemories, Markdown
+  src/components/ui/  the shadcn/ui components in use (Button, Input, Textarea, Tabs, ...), copied in
+  src/lib/         utils.ts (the `cn` class helper that shadcn components import)
+  src/test/        a stream recorded from the real API, helpers that fake fetch
+```
+
+shadcn/ui is not a package that is installed and upgraded: its CLI copies each component's source into `src/components/ui/`, where it belongs to this repo and is edited like any other file. They are built on Radix primitives, which bring the keyboard handling, focus management and ARIA that would otherwise be written by hand. `@` is an alias for `src/` in the Vite and TypeScript configs, as `components.json` expects, and a component is added with `npx shadcn@latest add <name>`.
+
+The pieces that decide something (`sse.ts`, `client.ts`, the error mapping) have no React in them, so they are tested without rendering. The views call them and hold no rules of their own.
+
+## What the server adds
+
+The loop already knows which memories it recalled when it stores the reply. The final assistant message of a turn gets two optional lists, `recalled` and `recalled_past`, of memory ids. A reply stored before this phase has neither and loads as if both were empty; a reply that calls a tool and so is not the end of the turn carries nothing.
+
+`GET /sessions/{id}/messages` then returns, with each assistant message, a `memories` list: `{id, kind, content, past, status}`, resolved when the chat is read. Memories are never overwritten (a change adds a row), so the content shown is the content the model saw. Two cases need care:
+
+- **A memory deleted since.** It is returned with `status: "deleted"` and no `content`: the owner asked for it to be forgotten, and an old reply must not bring its text back. The memory list can still show it, under its own `deleted` tab, because there the owner asks to see them.
+- **A memory replaced since.** It is returned with `status: "superseded"` and its text, and the view marks it "since replaced".
+
+The model never sees these fields: the loop stores them, but the input sent to the provider is built from the text and the tool calls only, and a test pins that. The `done` event already carries the id of the stored reply, so a streamed reply and a reloaded one attach the same memories to the same message.
+
+## Screens
+
+**Login.** One password field. A wrong password says so and keeps the field; the `503` that means login is not configured says the server is not set up, without naming settings. After login the visitor goes where they were headed, or to a new chat.
+
+**Chats.** A sidebar with the chats newest first, each as its preview and time, and a "New chat" entry; on a narrow screen it is a drawer. A new chat is not created until its first message is sent, so empty chats do not pile up: sending creates the session, sends the message and moves to `/chats/{id}`.
+
+**Chat view.** The history, a composer and the reply streaming under the last message.
+
+- Enter sends and Shift+Enter makes a new line; the composer is disabled while a reply is coming.
+- A character count appears near the 4,000-character limit and the send button stops there. The server still decides, and a `413` is handled all the same.
+- The reply is Markdown (the model writes `**bold**` and lists), shown as text elements only, never as raw HTML, and styled with Tailwind's typography classes.
+- Scrolling follows the reply only while the owner is already at the bottom.
+- The streaming reply sits in a live region, so a screen reader hears it arrive.
+
+**Recalled memories.** Under each reply a line says how many memories were recalled for it and opens a list: the kind, the text, and for a past one the label "was true" with its end date when it has one. It is labelled "recalled" and not "used", on purpose: recall puts a memory in the prompt and cannot tell which of them the model relied on, which is also why `last_used_at` means "shown" (see `PHASE3.md`). The `memory` event arrives before the first word, so the list is there while the reply is still streaming. A reply that had no memories says "No memory matched", which is what the agent was told too.
+
+**Memory list.** Tabs for active (the default), replaced and deleted, and one for all. Each row shows the kind, the text, an `external` badge when the source is not the owner, the dates it holds, when it was created, when it was last shown, and "replaced by" for a replaced memory. The list loads 100 at a time with "load more", and a box filters the rows already loaded. There are no edit or delete controls yet.
+
+## Look and components
+
+Tailwind CSS (v4, through its Vite plugin) with shadcn/ui's default style and the neutral base colour, lucide for icons. The theme is the CSS variables shadcn defines; light and dark follow the system setting through the `dark` class, set once at start-up and when the system setting changes, with no toggle. What each screen uses:
+
+| Screen | shadcn components |
+| --- | --- |
+| Login | Card, Input, Label, Button, Alert |
+| Chat list | Button, ScrollArea, and Sheet for the drawer on a narrow screen |
+| Chat view | Textarea and Button for the composer, ScrollArea, Skeleton while the history loads, Alert for errors |
+| Recalled memories | Collapsible, Badge for the kind, "was true" and "since replaced" |
+| Memory list | Tabs, Table, Badge for `external` and the status, Input for the filter, Button for "load more" |
+| App shell | DropdownMenu for log out, Separator, Tooltip |
+
+Only the components in this table are added. Anything custom is built from them, with `cn` merging the classes, and not from a second styling approach.
+
+## Streaming
+
+The reader takes the response body and yields events. Frames end at a blank line and each has an `event` and a `data` line (see the table in `PHASE3.md`); the reader copes with what a network does to that:
+
+- a frame split across two chunks, or a multi-byte character split across them, so bytes are decoded as a stream and not chunk by chunk;
+- `\r\n` line endings, comment lines and an event it does not know, which are skipped;
+- a stream that ends without `done` or `error`. That is a lost connection, shown as such, and the saved turn is looked up by reloading the chat.
+
+Closing the tab or navigating away does not stop the turn on the server: the answer is still stored and the chat is given back. Coming back shows it. If the owner returns while the turn is still running, the chat shows their question with no answer, and sending another message is refused with `409 turn_in_progress`; the view says the chat is still answering and reloads the history once after a few seconds. It does not poll.
+
+A failed turn leaves the owner's message saved with no reply. Sending the text again stores it a second time, and the model sees both. That is accepted for now: the view says "not answered, send it again", and a proper retry that does not repeat the message is not part of this phase.
+
+## Signing in
+
+The token is kept in `sessionStorage`: it survives a reload and is gone when the tab closes, and it is not shared with other tabs. It lasts 12 hours on the server and the client also stores when it ends, so it asks for the password again without a failed request first. Any `401` clears the token and goes to login, remembering where the visitor was. Logging out clears it. Nothing in the bundle is secret: there is no API key in the browser and the model is only ever called from the server.
+
+Because the answer is model output built from stored text, it is treated as untrusted: Markdown is rendered without raw HTML, links are shown only for `http` and `https` and open with `rel="noopener noreferrer"`, and a memory's text is always plain text.
+
+## Errors and limits
+
+| What happens | What the owner sees |
+| --- | --- |
+| Wrong password (`401`) | "That password is not right", the field kept |
+| Login not configured (`503`) | "Login is not available: the server is not set up" |
+| Token refused or expired (`401`) | Back to login, then back to where they were |
+| `empty_message`, `message_too_long` | Prevented in the composer; if the server refuses anyway, its message |
+| `chat_full` (409) | "This chat is full. Start a new one", with a button |
+| `turn_in_progress` (409) | "Still answering the last message", then one reload of the history |
+| `session_not_found` (404) | Back to the chat list |
+| `error` event: `recall_failed`, `model_error`, `step_limit`, `history_unreadable`, `internal_error` | The server's plain message under the question, "not answered, send it again" |
+| The stream ends with no `done` | "The connection was lost. Reload to see whether the reply was saved" |
+| The agent is not configured (`503` on send) | "The assistant is not available: the server has no model key" |
+| Network error | "Cannot reach the server" |
+
+The 4,000-character limit is a constant in the frontend that matches the server's default; the server stays the authority, so a different `MAX_MESSAGE_CHARS` only costs a `413` that is handled as above.
+
+## Tests
+
+The frontend tests run in Vitest with Testing Library and a fake `fetch` that returns a real `ReadableStream`; no test calls the API or a model. The stream fixture is a turn recorded from the real API in phase 3, so the shapes are the real ones.
+
+- **Reader:** a frame split across chunks, a split multi-byte character, `\r\n`, comments, an unknown event, a final frame without its blank line, a stream that ends without `done`.
+- **Client:** the token is sent, a `401` signs out, an error body becomes its code, a network failure becomes a message.
+- **Views** (queried by role and label, never by class name; Radix needs `ResizeObserver`, pointer capture and `scrollIntoView` stubbed once in the test setup under jsdom): login (right and wrong password, `503`, return to the page asked for); the chat view (the memory list appears before the text, text is appended, `done` attaches the stored id, an `error` event shows its message, `409` and `413` are mapped, Enter and Shift+Enter, the composer is locked during a reply, the counter and the limit); a new chat is created on the first send and not before; the chat list; the memory list (a status tab asks for that status, load more, the filter, no edit controls).
+- **Safety:** a `<script>` in a reply is shown as text, a `javascript:` link is not a link, a memory's text is not rendered as Markdown.
+- **Backend** (`pytest`, no key): the ids are stored on the reply that ends a turn and on no other, old rows without them still load, the provider input does not contain them, `GET /sessions/{id}/messages` returns them resolved, a deleted memory comes back without its text, a replaced one with it, and a user message has an empty list.
+
+The hooks run the type check, the linter and the tests when `frontend/` changed and `node_modules` is present, and say so when it is not.
+
+## Run it
+
+```sh
+make up && make migrate
+make seed                                         # the seed memories, needs OPENAI_API_KEY
+cd backend && .venv/bin/uvicorn app.main:app --reload     # APP_ENV=dev in .env for /docs
+make web                                          # npm install, then the dev server on :5173
+```
+
+Open `http://localhost:5173` and log in with the password whose hash is in `OWNER_PASSWORD_HASH`. Node 22 or later. `make web-test` runs the frontend tests and `make web-build` type-checks and builds.
+
+## Decisions to settle before starting
+
+| Decision | Default if you say nothing |
+| --- | --- |
+| Stack | Vite, React 19 and TypeScript, as in `DESIGN.md`; Tailwind and shadcn/ui for the interface; React Router for the three views; plain `fetch` and small hooks, no data library |
+| How the browser reaches the API | The dev server proxies `/api` to the backend, so one origin and no CORS setting. Serving the built app and the API from one host is a deployment question for phase 9 |
+| Where the token lives | `sessionStorage`, cleared on any `401` and on logout |
+| Styling | Tailwind CSS v4 and shadcn/ui (Radix primitives, source copied into the repo), neutral base colour, lucide icons; light and dark follow the system through the `dark` class, no toggle |
+| Markdown | Rendered with `react-markdown` without raw HTML; links limited to `http` and `https` |
+| Recalled memories after a reload | Stored with the reply and returned with the chat (the alternative, showing them only while streaming, leaves a reloaded chat looking as if nothing was recalled) |
+| A memory deleted since a reply | Shown as "a memory that has since been deleted", no text |
+| Wording | "Recalled", not "used" |
+| New chats | Created on the first message, not on the click |
+| A turn still running after a reload | One reload of the history after a few seconds when a send is refused; no polling |
+| Retrying a failed turn | Send the text again; a retry that does not store it twice is later |
+| Tests | Vitest and Testing Library against a fake stream; the real-browser check is by hand, and an automated browser test is a phase 9 question |
+| Hooks | Frontend checks run when `frontend/` changed and dependencies are installed |
+
+## Gate check
+
+| Check | Expected result |
+| --- | --- |
+| Login | A wrong password is refused with a message; the right one opens the chat; a reload stays signed in; a new tab asks again; logging out clears it |
+| Streaming | A reply arrives in pieces in the browser, not all at once, through the dev proxy |
+| Memories recalled | The list is under each reply while it streams and after a reload, the same on both; a past memory is labelled "was true"; a question with no match says so |
+| History | A reloaded chat shows the same messages in the same order, and a chat from before this phase still opens |
+| Forgotten and replaced | A memory deleted since shows no text on an old reply; a replaced one shows "since replaced" |
+| Memory list | The tabs show the right statuses; a deleted memory appears only under `deleted` and `all`; load more pages through the list |
+| Errors | A full chat, a chat still answering, an expired token, a stopped server and a refused message each give their message |
+| A closed tab | Closing it mid-reply and coming back shows the saved answer |
+| Safe rendering | A script tag and a `javascript:` link in a reply do nothing |
+| Layout and keyboard | Usable at phone width (the chat list is a drawer), light and dark both readable, and the whole flow works with the keyboard alone: login, chat list, send, expand the memories, switch tabs, with a visible focus and a drawer that traps it |
+| Tests | `make web-test` and `pytest` pass with no API key and no server |
+| Phase 3 | The agent eval baseline is unchanged: the stored ids are not in the prompt |
+
+## Not in this phase
+
+- Editing and deleting memories from the list, and anything else that writes: phase 5
+- Tools, confirmation prompts and the screens for them: phases 6 and 7
+- Compacting a long chat: phase 8; until then the 100-message cap shows as "chat full"
+- Tracing, the README demo and an automated browser test: phase 9
+- A terminal client: phase 10
+- Sign-up, several users and per-user data: phase 11
+- A theme toggle, custom branding or a design system of our own beyond the shadcn defaults
+- Deleting, renaming or searching chats, regenerating or editing a sent message, and attachments or voice
+- Hosting: serving the built app from the API or a reverse proxy, HTTPS and a production build pipeline
+- A login limit or a token refresh: the token lasts 12 hours and then the password is asked for again
