@@ -8,7 +8,7 @@ import pytest
 from fake_embedder import FakeEmbedder
 from memory_cases import EVAL_NOW
 from scripted_llm import ScriptedLLM, reply
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.agent import store
 from app.agent.llm import LLMError, TextDelta, Usage
@@ -276,6 +276,104 @@ async def test_the_chat_view_of_an_unknown_chat_is_a_404(client):
     response = await client.get("/sessions/00000000-0000-0000-0000-000000000000/messages")
 
     assert response.status_code == 404
+
+
+# What each reply recalled ---------------------------------------------------------------------
+
+
+async def ask(client, chat, text):
+    response = await client.post(f"/sessions/{chat}/messages", json={"text": text})
+    return frames(response)
+
+
+async def test_a_reloaded_chat_shows_the_memories_the_reply_streamed_with(
+    client, chat, agent_for, seeded
+):
+    agent_for(reply("You live in Porto."))
+
+    events = await ask(client, chat, "Where does the owner live? Porto")
+    shown = (await client.get(f"/sessions/{chat}/messages")).json()
+
+    streamed = events[0][1]["current"]
+    user, answer = shown
+    assert user["memories"] == []
+    assert [m["id"] for m in answer["memories"]] == [m["id"] for m in streamed]
+    assert answer["id"] == events[-1][1]["message_id"]
+    first = answer["memories"][0]
+    assert set(first) == {"id", "kind", "content", "past", "status"}
+    assert first["content"] == streamed[0]["content"] and first["past"] is False
+    assert first["status"] == "active"
+
+
+async def test_a_past_memory_is_marked_as_one_that_was_true_once(client, chat, agent_for, seeded):
+    agent_for(reply("Alfama."))
+
+    await ask(client, chat, "Where did the owner live before? Lisbon Alfama")
+    answer = (await client.get(f"/sessions/{chat}/messages")).json()[-1]
+
+    past = [m for m in answer["memories"] if m["past"]]
+    current = [m for m in answer["memories"] if not m["past"]]
+    assert any("Alfama" in m["content"] and m["status"] == "superseded" for m in past)
+    assert not {m["id"] for m in past} & {m["id"] for m in current}
+
+
+async def test_a_memory_deleted_since_comes_back_without_its_text(
+    client, chat, agent_for, seeded, session_factory
+):
+    agent_for(reply("Porto."))
+    events = await ask(client, chat, "Where does the owner live? Porto")
+    target = events[0][1]["current"][0]
+    async with session_factory() as db:
+        await db.execute(update(Memory).where(Memory.id == target["id"]).values(status="deleted"))
+        await db.commit()
+
+    answer = (await client.get(f"/sessions/{chat}/messages")).json()[-1]
+
+    gone = next(m for m in answer["memories"] if m["id"] == target["id"])
+    assert gone["status"] == "deleted" and gone["content"] is None
+    assert target["content"] not in json.dumps(answer)
+
+
+async def test_a_memory_replaced_since_keeps_its_text_and_says_so(
+    client, chat, agent_for, seeded, session_factory
+):
+    agent_for(reply("Porto."))
+    events = await ask(client, chat, "Where does the owner live? Porto")
+    target = events[0][1]["current"][0]
+    async with session_factory() as db:
+        await db.execute(
+            update(Memory).where(Memory.id == target["id"]).values(status="superseded")
+        )
+        await db.commit()
+
+    answer = (await client.get(f"/sessions/{chat}/messages")).json()[-1]
+
+    replaced = next(m for m in answer["memories"] if m["id"] == target["id"])
+    assert replaced["status"] == "superseded" and replaced["content"] == target["content"]
+
+
+async def test_a_reply_stored_before_recalls_were_kept_shows_no_memories(
+    client, chat, session_factory
+):
+    async with session_factory() as db:
+        sid = uuid.UUID(chat)
+        await store.append(db, sid, UserMessage(text="hi"))
+        await store.append(db, sid, AssistantMessage(text="hello"))
+
+    shown = (await client.get(f"/sessions/{chat}/messages")).json()
+
+    assert [m["memories"] for m in shown] == [[], []]
+
+
+async def test_an_id_that_no_longer_resolves_is_left_out(client, chat, session_factory):
+    async with session_factory() as db:
+        sid = uuid.UUID(chat)
+        await store.append(db, sid, UserMessage(text="hi"))
+        await store.append(db, sid, AssistantMessage(text="hello", recalled=(987654,)))
+
+    answer = (await client.get(f"/sessions/{chat}/messages")).json()[-1]
+
+    assert answer["memories"] == []
 
 
 # The turn outlives the client --------------------------------------------------------------

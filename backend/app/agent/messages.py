@@ -33,6 +33,10 @@ class AssistantMessage(_Frozen):
     role: Literal["assistant"] = "assistant"
     text: str
     tool_calls: tuple[ToolCall, ...] = ()
+    # The memories recalled for the turn this message ends, kept so a chat can show them later.
+    # Only the reply that ends a turn carries them, and they never go to the model
+    recalled: tuple[int, ...] = ()
+    recalled_past: tuple[int, ...] = ()
 
 
 class ToolResultMessage(_Frozen):

@@ -233,3 +233,17 @@ def test_a_key_is_required_to_build_the_real_client(monkeypatch):
 
     with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
         OpenAIClient()
+
+
+def test_what_was_recalled_for_a_reply_never_goes_to_the_provider():
+    items = to_input(
+        [
+            UserMessage(text="Where do I live?"),
+            AssistantMessage(text="In Porto.", recalled=(1, 6), recalled_past=(2,)),
+        ]
+    )
+
+    assert items == [
+        {"role": "user", "content": "Where do I live?"},
+        {"role": "assistant", "content": "In Porto."},
+    ]

@@ -33,11 +33,20 @@ class SessionOut(BaseModel):
     preview: str | None
 
 
+class RecalledOut(BaseModel):
+    id: int
+    kind: str
+    content: str | None  # None for a memory deleted since: an old reply must not bring it back
+    past: bool  # recalled as something that was true once
+    status: Literal["active", "superseded", "deleted"]
+
+
 class MessageOut(BaseModel):
     id: int
     role: Literal["user", "assistant"]
     text: str
     created_at: datetime
+    memories: list[RecalledOut]
 
 
 class SendRequest(BaseModel):
@@ -84,13 +93,44 @@ async def messages(
         raise HTTPException(
             500, {"code": "history_unreadable", "message": "a stored message cannot be read"}
         ) from None
-    return [
-        MessageOut(
-            id=row.id, role=row.message.role, text=row.message.text, created_at=row.created_at
-        )
+    shown = [
+        row
         for row in rows
         if isinstance(row.message, UserMessage | AssistantMessage) and row.message.text
     ]
+    wanted = {
+        memory_id
+        for row in shown
+        if isinstance(row.message, AssistantMessage)
+        for memory_id in (*row.message.recalled, *row.message.recalled_past)
+    }
+    found = await store.recalled_memories(db, wanted)
+    return [MessageOut(**_view(row, found)) for row in shown]
+
+
+def _view(row: store.StoredRow, found: dict[int, store.RecalledMemory]) -> dict:
+    message = row.message
+    memories: list[RecalledOut] = []
+    if isinstance(message, AssistantMessage):
+        for past, ids in ((False, message.recalled), (True, message.recalled_past)):
+            for memory_id in ids:
+                if memory := found.get(memory_id):
+                    memories.append(
+                        RecalledOut(
+                            id=memory.id,
+                            kind=memory.kind,
+                            content=None if memory.status == "deleted" else memory.content,
+                            past=past,
+                            status=memory.status,
+                        )
+                    )
+    return {
+        "id": row.id,
+        "role": message.role,
+        "text": message.text,
+        "created_at": row.created_at,
+        "memories": memories,
+    }
 
 
 @router.post("/{session_id}/messages")

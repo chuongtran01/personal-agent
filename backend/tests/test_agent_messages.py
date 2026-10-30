@@ -21,6 +21,7 @@ CALL = ToolCall(id="call_1", name="lookup", arguments={"query": "dentist"})
         AssistantMessage(text="In Porto."),
         AssistantMessage(text="", tool_calls=(CALL,)),
         AssistantMessage(text="Let me check.", tool_calls=(CALL,)),
+        AssistantMessage(text="In Porto.", recalled=(1, 6), recalled_past=(2,)),
         ToolResultMessage(call_id="call_1", output="12 November"),
     ],
 )
@@ -71,3 +72,15 @@ def test_messages_are_frozen():
 
     with pytest.raises(ValidationError):
         message.text = "changed"
+
+
+def test_a_reply_stored_before_recalls_were_kept_loads_with_none():
+    old_row = {"text": "In Porto.", "tool_calls": []}
+
+    assert from_row("assistant", old_row) == AssistantMessage(text="In Porto.")
+
+
+def test_the_recalled_ids_are_stored_as_plain_numbers():
+    _, content = to_row(AssistantMessage(text="x", recalled=(3, 4), recalled_past=(5,)))
+
+    assert content["recalled"] == [3, 4] and content["recalled_past"] == [5]

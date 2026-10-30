@@ -13,7 +13,7 @@ Nothing here writes memories. The memory list is read-only; editing and deleting
 
 ## Deliverables
 
-- [ ] **Recalled memories stored with the reply**: `backend/app/agent/messages.py`, `loop.py`, `store.py` and `api/sessions.py`. The reply that ends a turn carries the ids recalled for it, and `GET /sessions/{id}/messages` returns them resolved (kind, content, whether the memory is a past one, its status today). The model never sees these fields
+- [x] **Recalled memories stored with the reply**: `backend/app/agent/messages.py`, `loop.py`, `store.py` and `api/sessions.py`. The reply that ends a turn carries the ids recalled for it, and `GET /sessions/{id}/messages` returns them resolved (kind, content, whether the memory is a past one, its status today). The model never sees these fields
 - [ ] **Frontend scaffold**: `frontend/`. Vite, React and TypeScript, Tailwind CSS and shadcn/ui (set up with its CLI, the components copied into `src/components/ui/`), a dev proxy to the API, ESLint and the type check, Vitest with Testing Library, and `make web`, `make web-test` and `make web-build`
 - [ ] **API client and event reader**: `frontend/src/api/`. A typed `fetch` wrapper that adds the token and turns errors into codes, and a reader that parses the `POST` stream into events. Built first, against a stream recorded from the real API
 - [ ] **Login**: the password form, the token kept for the tab, and the way back to login when the token is missing or refused

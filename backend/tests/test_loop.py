@@ -73,6 +73,17 @@ async def play(loop, chat, text):
     return [event async for event in turn.events()]
 
 
+def ids(results):
+    return tuple(r.memory_id for r in results)
+
+
+def bare(message):
+    """A stored reply without the ids of what was recalled for it."""
+    if isinstance(message, AssistantMessage):
+        return message.model_copy(update={"recalled": (), "recalled_past": ()})
+    return message
+
+
 async def stored(session_factory, chat):
     async with session_factory() as db:
         return await store.load(db, chat)
@@ -91,7 +102,7 @@ async def test_a_turn_recalls_prompts_streams_and_stores_the_answer(session_fact
     assert isinstance(events[-1], AgentDone)
     assert await stored(session_factory, chat) == [
         UserMessage(text="Where does the owner live? Porto"),
-        AssistantMessage(text="You live in Porto."),
+        AssistantMessage(text="You live in Porto.", recalled=ids(events[0].current)),
     ]
     (call,) = llm.calls
     assert "lives in Porto" in call.system
@@ -189,7 +200,7 @@ async def test_a_second_turn_sees_the_conversation_and_recalls_from_the_last_two
     await play(loop, chat, "And his birthday?")
 
     second = llm.calls[1]
-    assert second.messages == (
+    assert tuple(bare(m) for m in second.messages) == (
         UserMessage(text="Tell me about Tiago"),
         AssistantMessage(text="Tiago is your partner."),
         UserMessage(text="And his birthday?"),
@@ -318,7 +329,7 @@ async def test_a_turn_runs_to_the_end_in_a_background_task_nobody_reads(
 
     await asyncio.create_task(pump())
 
-    assert (await stored(session_factory, chat))[-1] == AssistantMessage(text="Porto.")
+    assert (await stored(session_factory, chat))[-1].text == "Porto."
 
 
 # Failures ----------------------------------------------------------------------------------
@@ -426,7 +437,7 @@ async def test_a_failure_in_marking_memories_used_does_not_lose_the_answer(
     )
 
     assert isinstance(events[-1], AgentDone)
-    assert (await stored(session_factory, chat))[-1] == AssistantMessage(text="Porto.")
+    assert (await stored(session_factory, chat))[-1].text == "Porto."
 
 
 # Tools (the seam; none is registered in this phase) ---------------------------------------
@@ -526,3 +537,59 @@ def test_whether_recall_runs_is_a_property_of_the_loop_and_not_of_a_message():
     import inspect
 
     assert "memory" not in inspect.signature(AgentLoop.start).parameters
+
+
+# What is stored about the recall ----------------------------------------------------------
+
+
+async def test_the_reply_that_ends_a_turn_says_which_memories_were_recalled_for_it(
+    session_factory, seeded, chat
+):
+    events = await play(
+        make_loop(session_factory, ScriptedLLM(reply("Porto."))),
+        chat,
+        "Where does the owner live? Porto",
+    )
+
+    user, answer = await stored(session_factory, chat)
+    assert isinstance(events[0], MemoryRecalled) and events[0].current
+    assert answer.recalled == ids(events[0].current) and answer.recalled_past == ()
+    assert isinstance(user, UserMessage)
+
+
+async def test_a_history_question_stores_the_past_memories_apart(session_factory, seeded, chat):
+    events = await play(
+        make_loop(session_factory, ScriptedLLM(reply("Alfama."))),
+        chat,
+        "Where did the owner live before? Lisbon Alfama",
+    )
+
+    answer = (await stored(session_factory, chat))[-1]
+    assert answer.recalled_past == ids(events[0].past)
+    assert seeded["home-city-old"] in answer.recalled_past
+    assert not set(answer.recalled) & set(answer.recalled_past)
+
+
+async def test_only_the_reply_that_ends_the_turn_carries_the_recall(session_factory, seeded, chat):
+    loop = make_loop(
+        session_factory,
+        ScriptedLLM(tool_call("lookup"), reply("Porto.")),
+        tools=FakeTools({"lookup": "found"}),
+    )
+
+    events = await play(loop, chat, "Where does the owner live? Porto")
+
+    _, asked, _, answer = await stored(session_factory, chat)
+    assert asked.tool_calls and asked.recalled == () and asked.recalled_past == ()
+    assert answer.recalled == ids(events[0].current)
+
+
+async def test_with_recall_off_the_reply_records_nothing(session_factory, seeded, chat):
+    await play(
+        make_loop(session_factory, ScriptedLLM(reply("I don't know.")), recall_enabled=False),
+        chat,
+        "Where does the owner live? Porto",
+    )
+
+    answer = (await stored(session_factory, chat))[-1]
+    assert answer.recalled == () and answer.recalled_past == ()

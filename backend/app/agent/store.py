@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.messages import AssistantMessage, ToolResultMessage, UserMessage, from_row, to_row
-from app.models import ChatMessage, ChatSession
+from app.models import ChatMessage, ChatSession, Memory
 
 StoredMessage = UserMessage | AssistantMessage | ToolResultMessage
 
@@ -116,3 +116,24 @@ async def load_rows(db: AsyncSession, session_id: uuid.UUID) -> list[StoredRow]:
         StoredRow(row_id, created_at, from_row(role, content))
         for row_id, created_at, role, content in rows.all()
     ]
+
+
+@dataclass(frozen=True)
+class RecalledMemory:
+    id: int
+    kind: str
+    content: str
+    status: str
+
+
+async def recalled_memories(db: AsyncSession, memory_ids: set[int]) -> dict[int, RecalledMemory]:
+    """The memories a chat's replies recalled, as they are now. A memory is never overwritten, so
+    the content is what the model saw; ``status`` says what happened to it since."""
+    if not memory_ids:
+        return {}
+    rows = await db.execute(
+        select(Memory.id, Memory.kind, Memory.content, Memory.status).where(
+            Memory.id.in_(memory_ids)
+        )
+    )
+    return {row.id: RecalledMemory(row.id, row.kind, row.content, row.status) for row in rows.all()}
