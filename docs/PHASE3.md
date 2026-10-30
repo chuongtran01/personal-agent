@@ -22,8 +22,8 @@ The evals are the spec again: the agent eval cases are written before the loop t
 - [x] **API**: `backend/app/api/`. Sessions, the streaming message endpoint (`sse.py`), and a read-only memory list
 - [x] **Agent eval runner**: `evals/agent_eval.py` and the pure checks in `evals/agent_checks.py` (`make eval-agent`). Runs each case through the real loop on freshly seeded memories, with `--memory on|off|both`, and reports pass rates, latency and tokens
 - [x] **Repeat runs**: `--repeat N` plays each case N times; the results file has one entry per run and the report lists the flaky cases
-- [ ] **Tests**: `backend/tests/`. Login and scoping of every endpoint, recall, the prompt, the loop with a fake model, streaming and size limits. None needs an API key
-- [ ] **Baseline numbers**: recorded in this doc, dev first (three runs), then test once
+- [x] **Tests**: `backend/tests/`. Login and scoping of every endpoint, recall, the prompt, the loop with a fake model, streaming and size limits. None needs an API key
+- [x] **Baseline numbers**: recorded in this doc, dev first (three runs), then test once
 
 ## Architecture
 
@@ -157,6 +157,30 @@ cd backend && .venv/bin/uvicorn app.main:app --reload
 # log in and chat with curl (see below); the web app comes in phase 4
 make eval-agent                    # dev split, needs OPENAI_API_KEY; ARGS="--memory both --repeat 3", "--split test", "--case a003"
 ```
+
+## Baseline
+
+Dev split, 36 cases, three runs each, `gpt-6-luna`, recall `vector` with the top 5, clock fixed at `EVAL_NOW`. The test split was read once afterwards, with the same settings (see below).
+
+| | memory on | memory off |
+| --- | --- | --- |
+| Passed | 105 / 108 | 30 / 108 |
+| Leaks | 0 | 0 |
+| Cases that need a seeded fact (25) | 72 / 75 | 0 / 75 |
+| Turn errors | 0 | 0 |
+| Tokens in / out per message | 491 / 42 | 317 / 42 |
+| Seconds per message, p50 / p95 | 1.2 / 3.2 | 1.1 / 2.8 |
+| Recall, p50 | 0.19 s | none |
+
+Pass rate by category, memory on / off: changed fact 15/15 and 0/15, history 21/21 and 0/21, follow-up 6/6 and 0/6, duplicate wording 3/3 and 0/3, recall used 27/30 and 0/30, stale event 6/6 and 3/6; forgotten, false memory, injection and irrelevant pass 9/9, 9/9, 3/3 and 6/6 in both arms. No case was flaky: every case gave the same result in all three runs.
+
+- **Memory is the difference.** The cases that need a seeded fact go from 0 of 75 to 72 of 75. With memory off the agent says it does not know, so false-memory, forgotten, injection and irrelevant cases pass either way; those arms test that memory does no harm, and they hold with it on.
+- **The one failing case is `a003`**, the known miss, all three runs: the diet memory is not recalled and the agent asks which city instead. Everything else passes.
+- **Memory costs about 175 input tokens per message** (the recalled block) and about 0.2 s of recall; the answer is not slower at p50.
+
+**Test split** (20 cases, one run, same settings, read once): memory on 20 / 20, memory off 8 / 20, no leaks, no turn errors. The 12 cases that need a seeded fact pass 12 / 12 with memory on and 0 / 12 with it off. Tokens in / out per message 495 / 22 (on) and 318 / 30 (off); seconds p50 / p95 1.2 / 1.7 (on) and 1.1 / 1.6 (off); recall p50 0.19 s. The eight cases that pass with memory off are the ones that must not use memory: false memory, forgotten, injection, irrelevant, duplicate wording and the stale event. Test has no case like `a003`, so it does not repeat dev's one miss; with 20 cases and 20 passes it shows no failure, and it cannot show how close to one the agent is.
+
+**`hybrid` against `vector`** (memory on, same three runs): 105 / 108 in both, the same three failures, no flaky cases, the same tokens. Hybrid changed which memories were recalled in 27 of 108 runs, mostly the order or the last slot, and none of it changed an outcome; `a003` gets the same five memories. There is no reason to move off `vector` on this data, which agrees with phase 2. Dev cannot separate the two modes further: with 35 of 36 cases passing, there is no room to show a gain.
 
 ## Decisions to settle before starting
 
