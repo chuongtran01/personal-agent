@@ -28,16 +28,20 @@ export function RecalledMemories({ memories }: { memories: RecalledMemory[] | nu
       <CollapsibleContent>
         <ul className="mt-2 flex flex-col gap-2">
           {memories.map((memory) => (
-            <li key={memory.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <Badge variant="outline">{memory.kind}</Badge>
-              {memory.content === null ? (
-                <span className="italic text-muted-foreground">
-                  A memory that has since been deleted
-                </span>
-              ) : (
-                <span>{memory.content}</span>
-              )}
-              <Label memory={memory} />
+            <li key={memory.id} className="flex items-baseline gap-2">
+              <Badge variant="outline" className="shrink-0">
+                {memory.kind}
+              </Badge>
+              <span className="min-w-0 flex-1">
+                {memory.content === null ? (
+                  <span className="italic text-muted-foreground">
+                    A memory that has since been deleted
+                  </span>
+                ) : (
+                  memory.content
+                )}{" "}
+                <Label memory={memory} />
+              </span>
             </li>
           ))}
         </ul>

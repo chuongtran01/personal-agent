@@ -7,7 +7,7 @@ import type { ActiveTurn } from "@/lib/chat-state";
 
 function Question({ text }: { text: string }) {
   return (
-    <div className="ml-auto max-w-[85%] rounded-2xl bg-primary px-4 py-2 text-primary-foreground whitespace-pre-wrap break-words">
+    <div className="ml-auto max-w-[85%] rounded-2xl bg-muted px-4 py-2 text-foreground whitespace-pre-wrap break-words">
       {text}
     </div>
   );

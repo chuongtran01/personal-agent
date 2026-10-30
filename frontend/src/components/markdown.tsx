@@ -14,7 +14,18 @@ const webUrl = (url: string) => (/^https?:\/\//i.test(url) ? url : "");
 
 export function Markdown({ children }: { children: string }) {
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+    <div
+      className={[
+        "prose max-w-none break-words",
+        // The typography plugin's greys replaced by the theme's own colours, so a reply reads like
+        // the owner's text and light and dark both follow the theme
+        "[--tw-prose-body:var(--color-foreground)] [--tw-prose-headings:var(--color-foreground)]",
+        "[--tw-prose-bold:var(--color-foreground)] [--tw-prose-links:var(--color-foreground)]",
+        "[--tw-prose-code:var(--color-foreground)] [--tw-prose-quotes:var(--color-foreground)]",
+        "[--tw-prose-bullets:var(--color-muted-foreground)] [--tw-prose-counters:var(--color-muted-foreground)]",
+        "[--tw-prose-hr:var(--color-border)] [--tw-prose-th-borders:var(--color-border)] [--tw-prose-td-borders:var(--color-border)]",
+      ].join(" ")}
+    >
       <ReactMarkdown
         allowedElements={ALLOWED}
         unwrapDisallowed

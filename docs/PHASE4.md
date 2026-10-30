@@ -76,9 +76,11 @@ The model never sees these fields: the loop stores them, but the input sent to t
 
 **Login.** One password field. A wrong password says so and keeps the field; the `503` that means login is not configured says the server is not set up, without naming settings. After login the visitor goes where they were headed, or to a new chat. Where they were headed travels in the address as `?next=`, which anyone can write, so it is followed only when it is a path on this site: `//host`, `https://host`, `javascript:`, a backslash, a tab the URL parser would drop, and the login page itself all go to the home page. `router.replace` runs `javascript:` URLs, so this is a security check and not a nicety. Someone already signed in who opens the login page is sent on without seeing it.
 
-**Chats.** A sidebar with the chats newest first, each as its preview and time, and a "New chat" entry; on a narrow screen it is a drawer. A new chat is not created until its first message is sent, so empty chats do not pile up: sending creates the session, sends the message and moves to `/chats/{id}`. One gap remains: if the server then refuses that first message (no model key, say), the empty chat already exists and stays in the list as "New chat"; there is no way to delete a chat yet.
+**Chats.** The layout of a familiar chat app. A sidebar (shadcn's Sidebar: it folds away with its button or Ctrl/Cmd+B, and is a drawer on a narrow screen) holds the app name, a "New chat" entry, then "Recents": the chats newest first, one line each (the first message, or "New chat"; the time it was started is a hover title), and at the bottom who is signed in with a Log out button. The open chat is marked. A new chat is not created until its first message is sent, so empty chats do not pile up: sending creates the session, sends the message and moves to `/chats/{id}`. One gap remains: if the server then refuses that first message (no model key, say), the empty chat already exists and stays in the list as "New chat"; there is no way to delete a chat yet.
 
-**Chat view.** The history, a composer and the reply streaming under the last message.
+**New chat.** A greeting centred in the page over a large rounded composer with the send button inside it, and three suggestions under it ("What do you remember about me?" and two more). A suggestion only fills the box, so the owner decides what is sent.
+
+**Chat view.** The history, a composer and the reply streaming under the last message. The owner's messages sit right in a light bubble; a reply is plain text on the page, and the composer is the same rounded box, pinned to the bottom.
 
 - Enter sends and Shift+Enter makes a new line (Enter while composing characters with an input method confirms them and does not send). While a reply is coming, Send is locked but the box stays free, so the next message can be written meanwhile; a message the server will not take stays in the box with the reason, and is cleared only once the server has taken it.
 - A character count appears near the 4,000-character limit and the send button stops there. The server still decides, and a `413` is handled all the same.
@@ -97,11 +99,11 @@ Tailwind CSS (v4, as `create-next-app` sets it up) with shadcn/ui's default styl
 | Screen | shadcn components |
 | --- | --- |
 | Login | Card, Input, Label, Button, Alert |
-| Chat list | Button, ScrollArea, and Sheet for the drawer on a narrow screen |
+| Sidebar and chat list | Sidebar (which brings Sheet for the drawer, Tooltip and Skeleton), Avatar for who is signed in, Button |
 | Chat view | Textarea and Button for the composer, Skeleton while the history loads, Alert for errors; the conversation scrolls in a plain element, because following the reply needs its scroll position |
 | Recalled memories | Collapsible, Badge for the kind, "was true" and "since replaced" |
 | Memory list | Tabs, Table, Badge for `external` and the status, Input for the filter, Button for "load more" |
-| App shell | DropdownMenu for log out, Separator, Tooltip |
+| App shell | Sidebar's provider, inset and trigger |
 
 Only the components in this table are added. Anything custom is built from them, with `cn` merging the classes, and not from a second styling approach.
 
@@ -184,6 +186,7 @@ Open `http://localhost:3000` and log in with the password whose hash is in `OWNE
 | A memory deleted since a reply | Shown as "a memory that has since been deleted", no text |
 | Wording | "Recalled", not "used" |
 | New chats | Created on the first message, not on the click |
+| Layout | A sidebar with the recent chats, and a centred composer, as in the familiar chat apps; no images, plugins, voice or other tools the reference had |
 | A turn still running after a reload | One reload of the history after a few seconds when a send is refused; no polling |
 | Retrying a failed turn | Send the text again; a retry that does not store it twice is later |
 | Where a reply is read | A store outside React, keyed by chat, so leaving the page never drops a reply in flight |

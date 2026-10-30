@@ -18,7 +18,7 @@ const FOLLOW_WITHIN_PX = 80;
 
 export function ChatSkeleton() {
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4" aria-hidden>
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" aria-hidden>
       <Skeleton className="ml-auto h-10 w-2/3" />
       <Skeleton className="h-16 w-full" />
       <Skeleton className="ml-auto h-10 w-1/2" />
@@ -66,7 +66,7 @@ export function ChatView({ chatId }: { chatId: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div ref={scroller} onScroll={onScroll} className="flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-2xl p-4">
+        <div className="mx-auto w-full max-w-3xl p-4">
           {!chat.loaded ? (
             <ChatSkeleton />
           ) : failedToLoad ? (
@@ -87,8 +87,8 @@ export function ChatView({ chatId }: { chatId: string }) {
           )}
         </div>
       </div>
-      <div className="border-t">
-        <div className="mx-auto w-full max-w-2xl p-4">
+      <div>
+        <div className="mx-auto w-full max-w-3xl px-4 pb-4">
           <Composer disabled={isBusy(chat) || !chat.loaded} onSend={onSend} />
         </div>
       </div>

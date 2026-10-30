@@ -90,6 +90,27 @@ describe("sending", () => {
   });
 });
 
+describe("a starting text", () => {
+  test("is in the box from the start, and can be sent as it is", async () => {
+    const onSend = vi.fn().mockResolvedValue(OK);
+    render(<Composer initialText="What do you remember about me?" onSend={onSend} />);
+
+    expect(field()).toHaveValue("What do you remember about me?");
+    await userEvent.click(send());
+
+    expect(onSend).toHaveBeenCalledExactlyOnceWith("What do you remember about me?");
+  });
+
+  test("can be edited before it is sent", async () => {
+    const onSend = vi.fn().mockResolvedValue(OK);
+    render(<Composer initialText="Hello" onSend={onSend} />);
+
+    await userEvent.type(field(), " there{Enter}");
+
+    expect(onSend).toHaveBeenCalledExactlyOnceWith("Hello there");
+  });
+});
+
 describe("a message the server will not take", () => {
   test("stays in the box, with the reason", async () => {
     const onSend = vi.fn().mockResolvedValue(refused("turn_in_progress"));

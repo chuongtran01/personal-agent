@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 
@@ -71,4 +71,39 @@ test("a chat that cannot be created is reported, and nothing is sent", async () 
   expect(await screen.findByRole("alert")).toBeInTheDocument();
   expect(message()).toHaveValue("Hello");
   expect(callsTo(fetchMock, "POST /sessions/new1/messages")).toHaveLength(0);
+});
+
+test("offers a few things to ask, which only fill the box", async () => {
+  routeFetch(fetchMock, {});
+  render(<NewChat />);
+  const suggestions = screen.getByRole("list", { name: "Suggestions" });
+
+  await userEvent.click(within(suggestions).getByRole("button", { name: "What do you remember about me?" }));
+
+  expect(message()).toHaveValue("What do you remember about me?");
+  expect(message()).toHaveFocus();
+  expect(fetchMock).not.toHaveBeenCalled(); // nothing is sent until the owner says so
+  expect(within(suggestions).getAllByRole("button")).toHaveLength(3);
+});
+
+test("choosing another suggestion replaces the first, and the owner can still edit it", async () => {
+  const live = liveReply();
+  routeFetch(fetchMock, {
+    "POST /sessions": () => reply(201, chat("new1")),
+    "POST /sessions/new1/messages": () => live.response(),
+    "GET /sessions/new1/messages": () => reply(200, []),
+    "GET /sessions": () => reply(200, []),
+  });
+  render(<NewChat />);
+  const suggestions = screen.getByRole("list", { name: "Suggestions" });
+  await userEvent.click(within(suggestions).getByRole("button", { name: "What do you remember about me?" }));
+
+  await userEvent.click(within(suggestions).getByRole("button", { name: "What do I have coming up?" }));
+  expect(message()).toHaveValue("What do I have coming up?");
+  await userEvent.type(message(), " Next week.{Enter}");
+
+  await waitFor(() => expect(nav.router.push).toHaveBeenCalledWith("/chats/new1"));
+  const sent = callsTo(fetchMock, "POST /sessions/new1/messages")[0][1]?.body;
+  expect(JSON.parse(String(sent))).toEqual({ text: "What do I have coming up? Next week." });
+  live.end();
 });

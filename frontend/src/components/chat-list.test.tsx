@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 
@@ -7,6 +7,7 @@ import { setToken } from "@/auth/token";
 import { resetStore } from "@/lib/chat-store";
 import { callsTo, fakeFetch, reply, routeFetch } from "@/test/fetch";
 import { nav } from "@/test/navigation";
+import { renderInSidebar } from "@/test/sidebar";
 
 import { ChatList } from "./chat-list";
 
@@ -32,28 +33,37 @@ test("lists the chats as the server sends them, newest first, each a link to its
     "GET /sessions": () => reply(200, [chat("b", "Where do I live?", 5), chat("a", "My dentist", 180)]),
   });
 
-  render(<ChatList />);
+  renderInSidebar(<ChatList />);
 
   const links = await screen.findAllByRole("link", { name: /Where do I live|My dentist/ });
   expect(links.map((l) => l.getAttribute("href"))).toEqual(["/chats/b", "/chats/a"]);
-  expect(links[0]).toHaveTextContent("5 minutes ago");
-  expect(links[1]).toHaveTextContent("3 hours ago");
+  expect(screen.getByText("Recents")).toBeInTheDocument();
+});
+
+test("the time a chat was started is a hover title, not part of its name", async () => {
+  routeFetch(fetchMock, {
+    "GET /sessions": () => reply(200, [chat("b", "Where do I live?", 5), chat("a", "My dentist", 180)]),
+  });
+
+  renderInSidebar(<ChatList />);
+
+  expect(await screen.findByRole("link", { name: "Where do I live?" })).toHaveAttribute("title", "5 minutes ago");
+  expect(screen.getByRole("link", { name: "My dentist" })).toHaveAttribute("title", "3 hours ago");
 });
 
 test("a chat with no message yet is called New chat", async () => {
   routeFetch(fetchMock, { "GET /sessions": () => reply(200, [chat("a", null, 1)]) });
 
-  render(<ChatList />);
+  renderInSidebar(<ChatList />);
 
-  expect(await screen.findByRole("link", { name: /New chat.*1 minute ago/ })).toHaveAttribute("href", "/chats/a");
+  expect(await screen.findByRole("link", { name: "New chat" })).toHaveAttribute("href", "/chats/a");
 });
 
-test("offers a new chat at the top", async () => {
+test("says so when there are no chats yet", async () => {
   routeFetch(fetchMock, { "GET /sessions": () => reply(200, []) });
 
-  render(<ChatList />);
+  renderInSidebar(<ChatList />);
 
-  expect(screen.getByRole("link", { name: "New chat" })).toHaveAttribute("href", "/");
   expect(await screen.findByText("No chats yet.")).toBeInTheDocument();
 });
 
@@ -61,7 +71,7 @@ test("marks the chat that is open", async () => {
   nav.pathname = "/chats/a";
   routeFetch(fetchMock, { "GET /sessions": () => reply(200, [chat("b", "other", 5), chat("a", "this one", 9)]) });
 
-  render(<ChatList />);
+  renderInSidebar(<ChatList />);
 
   expect(await screen.findByRole("link", { name: /this one/ })).toHaveAttribute("aria-current", "page");
   expect(screen.getByRole("link", { name: /other/ })).not.toHaveAttribute("aria-current");
@@ -70,7 +80,7 @@ test("marks the chat that is open", async () => {
 test("shows placeholders while the chats load", () => {
   routeFetch(fetchMock, { "GET /sessions": () => new Promise<Response>(() => {}) });
 
-  const { container } = render(<ChatList />);
+  const { container } = renderInSidebar(<ChatList />);
 
   expect(container.querySelectorAll("[data-slot=skeleton]").length).toBeGreaterThan(0);
   expect(screen.queryByText("No chats yet.")).not.toBeInTheDocument();
@@ -78,7 +88,7 @@ test("shows placeholders while the chats load", () => {
 
 test("a failure says so and can be tried again", async () => {
   routeFetch(fetchMock, { "GET /sessions": () => reply(500, "boom") });
-  render(<ChatList />);
+  renderInSidebar(<ChatList />);
   expect(await screen.findByText("Could not load your chats.")).toBeInTheDocument();
 
   routeFetch(fetchMock, { "GET /sessions": () => reply(200, [chat("a", "back again", 1)]) });
@@ -86,14 +96,4 @@ test("a failure says so and can be tried again", async () => {
 
   expect(await screen.findByRole("link", { name: /back again/ })).toBeInTheDocument();
   expect(callsTo(fetchMock, "GET /sessions")).toHaveLength(2); // the failed load and the retry
-});
-
-test("tells its parent when a link is followed, so a drawer can close", async () => {
-  routeFetch(fetchMock, { "GET /sessions": () => reply(200, [chat("a", "a chat", 1)]) });
-  const onNavigate = vi.fn();
-  render(<ChatList onNavigate={onNavigate} />);
-
-  await userEvent.click(await screen.findByRole("link", { name: /a chat/ }));
-
-  expect(onNavigate).toHaveBeenCalled();
 });

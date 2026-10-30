@@ -5,66 +5,72 @@ import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSkeleton,
+  useSidebar,
+} from "@/components/ui/sidebar";
 import { refreshChatList } from "@/lib/chat-store";
 import { relativeTime } from "@/lib/time";
 import { useChatList } from "@/lib/use-chat";
 
-export function ChatList({ onNavigate }: { onNavigate?: () => void }) {
+/** The "Recents" group of the sidebar: the chats, newest first. Must sit inside a SidebarProvider. */
+export function ChatList() {
   const { items, error } = useChatList();
   const pathname = usePathname();
+  const { setOpenMobile } = useSidebar();
 
   useEffect(() => {
     void refreshChatList();
   }, []);
 
   return (
-    <nav aria-label="Chats" className="flex min-h-0 flex-1 flex-col gap-2 p-2">
-      <Button asChild variant="outline">
-        <Link href="/" onClick={onNavigate}>
-          New chat
-        </Link>
-      </Button>
-      <ScrollArea className="min-h-0 flex-1">
+    <SidebarGroup>
+      <SidebarGroupLabel>Recents</SidebarGroupLabel>
+      <SidebarGroupContent>
         {items === null && !error && (
-          <div className="flex flex-col gap-2 p-1" aria-hidden>
-            <Skeleton className="h-10" />
-            <Skeleton className="h-10" />
-            <Skeleton className="h-10" />
+          <div className="flex flex-col gap-1" aria-hidden>
+            <SidebarMenuSkeleton />
+            <SidebarMenuSkeleton />
+            <SidebarMenuSkeleton />
           </div>
         )}
         {error && (
-          <div className="flex flex-col items-start gap-2 p-2 text-sm">
+          <div className="flex flex-col items-start gap-2 px-2 text-sm">
             <span>Could not load your chats.</span>
             <Button size="sm" variant="outline" onClick={() => void refreshChatList()}>
               Try again
             </Button>
           </div>
         )}
-        {items?.length === 0 && <p className="p-2 text-sm text-muted-foreground">No chats yet.</p>}
-        <ul className="flex flex-col gap-1">
+        {items?.length === 0 && (
+          <p className="px-2 text-sm text-muted-foreground">No chats yet.</p>
+        )}
+        <SidebarMenu aria-label="Recent chats">
           {items?.map((chat) => {
             const href = `/chats/${encodeURIComponent(chat.id)}`;
-            const current = pathname === href;
             return (
-              <li key={chat.id}>
-                <Link
-                  href={href}
-                  onClick={onNavigate}
-                  aria-current={current ? "page" : undefined}
-                  className="flex flex-col rounded-lg px-3 py-2 text-sm hover:bg-muted aria-[current=page]:bg-muted"
-                >
-                  <span className="truncate">{chat.preview ?? "New chat"}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {relativeTime(chat.created_at)}
-                  </span>
-                </Link>
-              </li>
+              <SidebarMenuItem key={chat.id}>
+                <SidebarMenuButton asChild isActive={pathname === href}>
+                  <Link
+                    href={href}
+                    title={relativeTime(chat.created_at)}
+                    aria-current={pathname === href ? "page" : undefined}
+                    onClick={() => setOpenMobile(false)}
+                  >
+                    <span className="truncate">{chat.preview ?? "New chat"}</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             );
           })}
-        </ul>
-      </ScrollArea>
-    </nav>
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
   );
 }

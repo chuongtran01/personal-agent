@@ -5,8 +5,9 @@ import { ThemeFollower } from "@/components/theme-follower";
 
 import "./globals.css";
 
+// The theme in globals.css reads the sans font from --font-sans, so that is the variable to define
 const geistSans = Geist({
-  variable: "--font-geist-sans",
+  variable: "--font-sans",
   subsets: ["latin"],
 });
 
