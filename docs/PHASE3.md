@@ -154,7 +154,7 @@ make up
 make migrate
 python -m app.auth hash            # paste the result into .env as OWNER_PASSWORD_HASH
 make seed                          # the seed memories, needs OPENAI_API_KEY
-cd backend && .venv/bin/uvicorn app.main:app --reload
+make api
 # log in and chat with curl (see below); the web app comes in phase 4
 make eval-agent                    # dev split, needs OPENAI_API_KEY; ARGS="--memory both --repeat 3", "--split test", "--case a003"
 ```

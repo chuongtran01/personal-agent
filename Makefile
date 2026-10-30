@@ -1,4 +1,4 @@
-.PHONY: up down db-reset migrate seed install hooks test lint eval-memory eval-memory-retrieval eval-agent web-install web web-lint web-test web-build
+.PHONY: up down db-reset migrate seed install hooks test lint eval-memory eval-memory-retrieval eval-agent api web-install web web-lint web-test web-build
 
 up:
 	docker compose up -d db
@@ -11,6 +11,10 @@ db-reset:
 
 migrate:
 	cd backend && .venv/bin/alembic upgrade head
+
+# The API on :8000, reloading on changes. Needs the database (make up) and the settings in .env
+api:
+	cd backend && .venv/bin/uvicorn app.main:app --reload
 
 # Load the seed memories (needs OPENAI_API_KEY); ARGS=--reset empties the memory tables first
 seed:

@@ -64,7 +64,7 @@ make up          # starts Postgres on localhost:5432
 make install     # creates backend/.venv and installs dependencies
 make migrate     # applies Alembic migrations
 make test
-cd backend && .venv/bin/uvicorn app.main:app --reload
+make api
 curl localhost:8000/health
 ```
 

@@ -159,7 +159,7 @@ The hooks run the type check, the linter and the tests when `frontend/` changed 
 ```sh
 make up && make migrate
 make seed                                         # the seed memories, needs OPENAI_API_KEY
-cd backend && .venv/bin/uvicorn app.main:app --reload     # APP_ENV=dev in .env for /docs
+make api                                          # the API on :8000; APP_ENV=dev in .env for /docs
 make web                                          # npm install, then the dev server on :3000
 ```
 
