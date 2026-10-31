@@ -14,7 +14,7 @@ Two pieces of earlier phases are completed here. Phase 3 seeds the memory once p
 ## Deliverables
 
 - [x] **Extraction eval and cases first**: `evals/extraction_cases.py`, `evals/extraction_eval.py`, `evals/datasets/extraction.{dev,test}.jsonl`. Fixed turns, each with the memory changes it must and must not produce, checked by code. Written, and run against a stub that stores nothing (the baseline), before the extractor exists
-- [ ] **Extractor**: `backend/app/memory/extract.py`. One model call after a turn: the owner's messages in, proposed changes out (`add`, `delete`) as structured output, validated before anything uses them
+- [x] **Extractor**: `backend/app/memory/extract.py`. One model call after a turn: the owner's messages in, proposed changes out (`add`, `delete`) as structured output, validated before anything uses them
 - [ ] **Reconciliation**: `backend/app/memory/reconcile.py`. Each proposal is compared with the closest active memories; the result is `noop`, `add`, `supersede(id)` or `delete(id)`, and the rules that keep it safe are code, not prompt
 - [ ] **Write functions with events**: `backend/app/memory/write.py`. `add`, `supersede`, `delete`, `restore`, each in one transaction with its `memory_events` row and the reason, so any change can be explained and undone
 - [ ] **Filter before write**: `backend/app/memory/filter.py`. Card numbers, passwords, PINs and long identifiers are dropped in code whatever the model proposed
@@ -50,9 +50,9 @@ Extraction runs after the reply, so it adds no latency to the answer. The cost i
 
 The input is the owner's messages of the turn, with the last few earlier messages as context. The assistant's reply is shown as context, labelled as the assistant's, and is never a source: a fact the model said and the owner did not is not stored. Tool results are never in the input (there are none yet; phase 6 keeps them out, and anything from an outside source can only be stored as `external`).
 
-The call returns a list of proposals, each one `{op, kind, content, valid_from, valid_until}`:
+The call returns a list of proposals, each one `{op, kind, content, valid_until}`:
 
-- `add`: one self-contained sentence in the third person ("The owner has a dentist appointment on 3 March 2027"), with a kind (`fact`, `preference`, `event`, `episode`) and dates when the owner gave or implied them. The call is given today's date and the owner's time zone, so "next Friday" becomes a date
+- `add`: one self-contained sentence in the third person ("The owner has a dentist appointment on 3 March 2027"), with a kind (`fact`, `preference`, `event`, `episode`). Only an event has a date, `valid_until`, the last day it takes place. There is no `valid_from`: recall hides a memory whose `valid_from` is still ahead of the clock (phase 2), so a start date would make next week's dinner invisible until the day. The call is given today's date and the owner's time zone, so "this Friday" becomes a date
 - `delete`: a sentence describing what the owner asked to forget, not an id; finding the memory is reconciliation's job
 
 Questions, greetings, small talk, requests ("book me a table"), and what the assistant said produce nothing. The empty list is the usual answer.
@@ -69,7 +69,7 @@ For each proposal the nearest active memories are found (vector search over acti
 | A delete matches nothing | Nothing is deleted, and nothing is stored in its place |
 | A delete matches several | Only the ones the model names and that were shown; the number is capped per turn |
 
-Supersede writes a new row, sets the old one `superseded` with `superseded_by`, and sets the old row's `valid_until` to the new one's `valid_from` (or the time of the message), so history questions still work. Nothing is overwritten and nothing is hard-deleted.
+Supersede writes a new row, sets the old one `superseded` with `superseded_by`, and sets the old row's `valid_until` to the time of the message, so history questions still work. Nothing is overwritten and nothing is hard-deleted.
 
 Because the call that reconciles sees the candidates' ids, this is the one place memory ids go to a model. The reply's prompt still never contains them.
 
@@ -96,10 +96,25 @@ Decisions made while building it:
 
 - A write is judged on words, kind and dates, never on exact wording, so a model that writes "The owner is allergic to penicillin" and one that writes "Penicillin allergy" both pass.
 - Any write that was not asked for fails the case. That is what makes five wordings of one fact (`e021`) mean one memory, and it is stricter than a recall score: a model that stores a harmless extra fact fails that case.
-- An event's end counts if it is the last day or the start of the next day.
+- An event's end counts if it is the last day or the start of the next day. The start of an event is not checked, because the extractor does not store one; a new memory whose `valid_from` is ahead of the clock fails the case (`hidden_from_recall`).
 - "Forget that" with nothing to match, a request, a tentative remark ("maybe I should learn Spanish") and anything the assistant said are all `no_changes` cases.
 
 **Baseline (writer `none`, nothing stored):** dev 15 of 37, test 8 of 16. These are not passes in any useful sense: the stub does nothing, and a case whose right answer is "change nothing" is passed by doing nothing. They are exactly the no-change cases (no_write, assistant_claim, delete_unclear, and the duplicate and sensitive cases that expect no change). Every case that asks for a write or a delete fails, and "zero stored, zero wrong changes" is trivially true for a writer that writes nothing. The numbers are the floor the extractor must beat on the write cases, and a reminder that the no-change cases alone cannot tell a good extractor from a silent one.
+
+## Extractor, as built
+
+`backend/app/memory/extract.py`, behind `StructuredLLM` (`app/agent/llm.py`), a second small view of the model next to `LLMClient`: one call that answers with parsed JSON. `OpenAIClient.generate` implements it with a strict JSON schema and no stored copy; a call that does not complete, or an answer that is not JSON, raises `LLMError` without a retry (the loop retries chat calls; a missed memory is a quality problem and nothing here retries it). The model is `EXTRACTION_MODEL`, which defaults to the chat model.
+
+- **Input:** the owner's messages of the turn (never clipped), up to six earlier messages and the assistant's reply, each in its own tagged section with angle brackets escaped so a message cannot close a section. The instructions say the earlier messages and the reply are for understanding only, and everything inside the tags is data.
+- **Output:** `add` (kind, one sentence, `valid_until` for events) and `delete` (a description of what to forget, no id). The model never sees existing memories, so it cannot tell a repeat or a changed fact from a new one; reconciliation does.
+- **Checked, not trusted:** a proposal with an unknown op or kind, an empty or over-long sentence (500 characters) is dropped and counted, not repaired. A date on anything but an event is ignored; one that does not parse is ignored and the memory kept. At most five adds and three deletes are kept, and an invalid proposal does not use up a slot.
+- **Tests:** 46 for the extractor and 10 for `generate`, with scripted fakes and no key. Nine deliberate breaks (no caps, a date kept on any kind, no escaping, no kind check, an end that is not the next day, a time zone overridden, no context cap, today read in UTC, no length limit) each failed a test.
+
+**Two things found by building it.** The dates: the first eval cases put an event's start in `valid_from`, which phase 2's recall would have hidden until that day, so the cases and checks were changed to the end date only. And `e009` ("It was our wedding anniversary yesterday") was ambiguous: the model stored "The owner's wedding anniversary is on 27 October" as a fact, three runs out of three, which is reasonable because an anniversary recurs. The case was revised after the first run to check that "yesterday" became 27 October, which is what it was for. That is a change to a dev case after seeing a result, recorded here for that reason.
+
+**First results, extractor alone (`--writer extract`), dev, three runs, 111 cases played:** 84 passed. The 27 that failed are the nine cases that need reconciliation, three times each: two duplicates (`e019`, `e020`: it stores the repeat, which it cannot see), four supersedes (it adds the new fact, which is right, but cannot replace the old one) and three deletes (it cannot find a memory). Every case that does not need reconciliation passed in all three runs: 18 of 18 adds, 9 of 9 assistant claims, 9 of 9 event dates, 6 of 6 multi-fact, 18 of 18 no-write, 6 of 6 non-English, 9 of 9 sensitive, 6 of 6 unclear deletes, and the five wordings of one fact (`e021`) written once. Zero forbidden words stored, zero wrong changes. About 670 input and 80 output tokens a turn, most of it the instructions. The sensitive cases passed on the model alone, with no filter yet; the filter is still the guarantee. The test split has not been run: it is read once, with the whole pipeline.
+
+One thing to watch in reconciliation: for "Actually, I hate mornings. I run in the evening." the extractor wrote two preferences ("dislikes mornings", "runs in the evening"). The case expects one write that replaces the morning memory, so how the second one is handled will show in the reconciled result.
 
 ## Memory API
 
@@ -159,7 +174,7 @@ Cases cover each trap in `data/memory_traps.yaml` plus ones too small for an end
 | Contradiction | The newer owner statement wins and supersedes; the old one stays as history |
 | Similar closeness threshold | A cosine threshold set from the dev cases and recorded here; the second call decides within it |
 | Many facts in one message | All are proposed; at most five writes and three deletes per turn, so one odd message cannot rewrite memory |
-| Dates | The extractor resolves relative dates against the turn's date and the owner's time zone; an event with a past end date is not offered as upcoming (phase 2 rule, unchanged) |
+| Dates | The extractor resolves relative dates against the turn's date and the owner's time zone and sets only an event's end (`valid_until`; a day ends at the start of the next one in the owner's zone); it never sets `valid_from`, so nothing it stores is hidden by the phase 2 rule. An event with a past end is not offered as upcoming (phase 2 rule, unchanged). A fact that starts to hold later (a job in January) is stored with its date in the text and is visible now; hiding it until then is a later question |
 | Restore | Only for deleted memories; a replaced memory is edited through its current version |
 | Edit | A supersede, with reason "edited by the owner" |
 | Memory off in evals | A constructor option turns off both recall and writes, so the control run changes nothing |

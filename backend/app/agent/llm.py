@@ -1,7 +1,8 @@
 """The agent's view of a language model: one streaming call, no provider in sight.
 
 The loop talks to ``LLMClient`` and nothing else, so it is tested with a scripted fake and the
-provider can change without touching it. Events come out in order: any number of text deltas, any
+provider can change without touching it. ``StructuredLLM`` is the second, smaller view: one call
+that returns parsed JSON. Events come out in order: any number of text deltas, any
 tool calls the model asked for, then exactly one ``Done``.
 """
 
@@ -55,6 +56,14 @@ class LLMError(Exception):
         self.retryable = retryable
 
 
+@dataclass(frozen=True)
+class Generated:
+    """One answer that was asked for as JSON, already parsed."""
+
+    data: Any
+    usage: Usage
+
+
 class LLMClient(Protocol):
     def stream(
         self,
@@ -64,4 +73,17 @@ class LLMClient(Protocol):
         tools: Sequence[ToolSpec] = (),
     ) -> AsyncIterator[LLMEvent]:
         """Stream one model reply. Raises LLMError, possibly after some deltas were yielded."""
+        ...
+
+
+class StructuredLLM(Protocol):
+    """One model call that answers with JSON, for steps that are not a chat (memory extraction)."""
+
+    async def generate(
+        self, *, system: str, prompt: str, name: str, schema: dict[str, Any]
+    ) -> Generated:
+        """Answer ``prompt`` with JSON that matches ``schema`` (a strict JSON schema object).
+
+        Raises LLMError when the call fails, the model refuses or stops early, or the answer is
+        not JSON. A step that wants a retry decides that itself."""
         ...

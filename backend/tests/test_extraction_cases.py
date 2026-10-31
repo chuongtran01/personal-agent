@@ -14,9 +14,7 @@ ROW = {
     "context": [],
     "owner": ["I moved to Porto."],
     "reply": None,
-    "writes": [
-        {"kind": None, "include": [["Porto"]], "replaces": "city", "starts": None, "ends": None}
-    ],
+    "writes": [{"kind": None, "include": [["Porto"]], "replaces": "city", "ends": None}],
     "deletes": [],
     "no_changes": False,
     "must_not_store": [],
@@ -143,15 +141,10 @@ def test_empty_messages_are_refused(tmp_path):
     broken(tmp_path, "reply is empty", reply=" ")
 
 
-def test_an_event_cannot_end_before_it_starts(tmp_path):
-    write = {**ROW["writes"][0], "starts": "2027-01-02", "ends": "2027-01-01"}
-    broken(tmp_path, "ends before it starts", writes=[write])
-
-
 def test_each_category_has_its_own_shape(tmp_path):
     broken(tmp_path, "supersede case must replace", writes=[{**ROW["writes"][0], "replaces": None}])
     broken(tmp_path, "delete case must delete", category="delete")
-    broken(tmp_path, "must give a start date", category="event_date")
+    broken(tmp_path, "the day the event ends", category="event_date")
     broken(tmp_path, "at least two writes", category="multi_fact")
     broken(tmp_path, "changes nothing", category="delete_unclear")
     broken(tmp_path, "must not be stored", category="sensitive")

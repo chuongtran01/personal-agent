@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from extraction_cases import EVAL_TZ, ExtractionCase, load_all
+from extraction_cases import EVAL_NOW, EVAL_TZ, ExtractionCase, load_all
 from extraction_checks import Add, Delete, Supersede, check_case
 
 CITY = {"key": "city", "kind": "fact", "content": "The owner lives in Lisbon.", "status": "active"}
@@ -13,7 +13,6 @@ def write(include, **rest):
         "kind": None,
         "include": include,
         "replaces": None,
-        "starts": None,
         "ends": None,
         **rest,
     }
@@ -194,33 +193,46 @@ def test_a_delete_does_not_count_toward_stored_text():
     assert check_case(case, [Delete("city")]).passed
 
 
-def test_an_event_start_is_read_in_the_owners_time_zone():
-    case = make(writes=[write([["dentist"]], starts="2027-03-03")])
+def test_an_event_end_is_read_in_the_owners_time_zone():
+    case = make(writes=[write([["dentist"]], ends="2027-03-03")])
 
-    assert check_case(case, [Add("event", "dentist", at(2027, 3, 3, 9))]).passed
-    assert not check_case(case, [Add("event", "dentist", at(2027, 3, 2, 23))]).passed
+    assert check_case(case, [Add("event", "dentist", None, at(2027, 3, 3, 11))]).passed
+    assert not check_case(case, [Add("event", "dentist", None, at(2027, 3, 2, 11))]).passed
+    assert not check_case(case, [Add("event", "dentist", None, at(2027, 3, 5))]).passed
     assert not check_case(case, [Add("event", "dentist")]).passed
-    assert not check_case(case, [Add("event", "dentist", at(2027, 3, 4))]).passed
 
 
-def test_a_start_late_in_utc_is_the_next_day_in_lisbon_summer_time():
-    case = make(writes=[write([["dinner"]], starts="2027-07-02")])
+def test_an_end_late_in_utc_is_the_next_day_in_lisbon_summer_time():
     late_utc = datetime(2027, 7, 1, 23, 30, tzinfo=UTC)  # 00:30 on the 2nd in Lisbon
+    on_the_second = make(writes=[write([["dinner"]], ends="2027-07-02")])
+    before = make(writes=[write([["dinner"]], ends="2027-06-30")])
 
-    assert check_case(case, [Add("event", "dinner", late_utc)]).passed
-    assert not check_case(
-        make(writes=[write([["dinner"]], starts="2027-07-01")]), [Add("event", "dinner", late_utc)]
-    ).passed
+    assert check_case(on_the_second, [Add("event", "dinner", None, late_utc)]).passed
+    assert not check_case(before, [Add("event", "dinner", None, late_utc)]).passed
 
 
 def test_an_event_end_may_be_the_last_day_or_the_start_of_the_next():
-    case = make(writes=[write([["Berlin"]], starts="2026-12-12", ends="2026-12-15")])
-    start = at(2026, 12, 12)
+    case = make(writes=[write([["Berlin"]], ends="2026-12-15")])
 
-    assert check_case(case, [Add("event", "Berlin", start, at(2026, 12, 15, 23))]).passed
-    assert check_case(case, [Add("event", "Berlin", start, at(2026, 12, 16))]).passed
-    assert not check_case(case, [Add("event", "Berlin", start, at(2026, 12, 17))]).passed
-    assert not check_case(case, [Add("event", "Berlin", start)]).passed
+    assert check_case(case, [Add("event", "Berlin", None, at(2026, 12, 15, 23))]).passed
+    assert check_case(case, [Add("event", "Berlin", None, at(2026, 12, 16))]).passed
+    assert not check_case(case, [Add("event", "Berlin", None, at(2026, 12, 17))]).passed
+
+
+def test_a_new_memory_that_starts_later_is_hidden_from_recall_and_fails():
+    case = make(writes=[write([["dinner"]], ends="2026-10-30")])
+    later = at(2026, 10, 30, 20)
+
+    verdict = check_case(case, [Add("event", "dinner", later, at(2026, 10, 31))])
+
+    assert verdict.failures == ("hidden_from_recall:dinner",)
+
+
+def test_a_start_that_has_already_passed_is_fine():
+    case = make(writes=[write([["gym"]])])
+
+    assert check_case(case, [Add("fact", "gym", at(2026, 10, 1))]).passed
+    assert check_case(case, [Add("fact", "gym", EVAL_NOW)]).passed
 
 
 def test_a_run_with_several_failures_lists_each():

@@ -2,13 +2,18 @@
 
 Run from ``backend/`` (``make eval-extraction``):
 
-    python ../evals/extraction_eval.py [--split dev|test] [--writer none] [--repeat N]
+    python ../evals/extraction_eval.py [--split dev|test] [--writer none|extract] [--repeat N]
 
 There is no agent, no database and no search here: a writer gets one case (the memories that
 already exist, the earlier messages, the owner's turn and the assistant's reply) and answers with
-the changes it would make. ``extraction_checks`` judges them. ``--writer none`` is the baseline
-that stores nothing, so what it passes is exactly the cases that ask for no change; the real
-writer is added when the extractor exists.
+the changes it would make. ``extraction_checks`` judges them.
+
+``--writer none`` is the baseline that stores nothing, so what it passes is exactly the cases that
+ask for no change. ``--writer extract`` runs the extractor alone (``app/memory/extract.py``) on a
+real model, so it needs ``OPENAI_API_KEY`` and sends the cases' text to the provider: each proposed
+``add`` becomes an ``Add``. It has no reconciliation yet, so it can neither see the existing
+memories nor delete one: the duplicate, supersede and delete cases fail by design until the
+reconciliation step is added to this writer.
 
 The dev split is the one to tune against, read three times (``--repeat 3``); the test split is
 held out and read once. The gate is zero tolerance: a forbidden word or a card-like number in a
@@ -25,9 +30,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
-from extraction_cases import SPLITS, ExtractionCase, InvalidDataset, load_cases
-from extraction_checks import Change, check_case
+from extraction_cases import EVAL_TZ, SPLITS, ExtractionCase, InvalidDataset, load_cases
+from extraction_checks import Add, Change, Delete, Supersede, check_case
 from memory_cases import EVAL_NOW
+
+from app.agent.llm import StructuredLLM
+from app.agent.openai_client import OpenAIClient
+from app.config import settings
+from app.memory.extract import ContextMessage, extract
 
 ROOT = Path(__file__).resolve().parent
 RESULTS = ROOT / "results"
@@ -51,7 +61,30 @@ class NoWrites:
         return Outcome()
 
 
-WRITERS = {"none": NoWrites}
+class ExtractOnly:
+    """The extractor on its own: every proposed add is stored as it is, nothing else changes."""
+
+    def __init__(self, llm: StructuredLLM | None = None):
+        self._llm = llm or OpenAIClient(model=settings.extraction_model or settings.agent_model)
+
+    async def run(self, case: ExtractionCase, now: datetime) -> Outcome:
+        found = await extract(
+            self._llm,
+            owner=case.owner,
+            now=now,
+            timezone=EVAL_TZ.key,
+            context=[ContextMessage(m.role, m.text) for m in case.context],
+            reply=case.reply,
+        )
+        changes: list[Change] = [
+            Add(p.kind or "fact", p.content, None, p.valid_until)
+            for p in found.proposals
+            if p.op == "add"
+        ]
+        return Outcome(changes, found.usage.input_tokens, found.usage.output_tokens)
+
+
+WRITERS = {"none": NoWrites, "extract": ExtractOnly}
 
 
 @dataclass(frozen=True)
@@ -67,6 +100,15 @@ class CaseRun:
     error: str | None
     input_tokens: int
     output_tokens: int
+    proposed: tuple[str, ...] = ()  # what the writer changed, to read a failure without a rerun
+
+
+def _describe(change: Change) -> str:
+    if isinstance(change, Delete):
+        return f"delete {change.target}"
+    until = f" (until {change.valid_until.isoformat()})" if change.valid_until else ""
+    target = f"replace {change.target}: " if isinstance(change, Supersede) else "add "
+    return f"{target}[{change.kind}] {change.content}{until}"
 
 
 async def run_case(writer: Writer, case: ExtractionCase, run: int) -> CaseRun:
@@ -99,6 +141,7 @@ async def run_case(writer: Writer, case: ExtractionCase, run: int) -> CaseRun:
         error=None,
         input_tokens=outcome.input_tokens,
         output_tokens=outcome.output_tokens,
+        proposed=tuple(_describe(change) for change in outcome.changes),
     )
 
 
@@ -140,6 +183,8 @@ def print_failures(runs: list[CaseRun]) -> None:
         if not item.passed and item.id not in seen:
             seen.add(item.id)
             print(f"  {item.id} ({item.category}): {', '.join(item.failures)}")
+            for line in item.proposed:
+                print(f"      wrote: {line}")
     if not seen:
         print("  none")
 
@@ -150,6 +195,7 @@ async def main(
     repeat: int,
     only: list[str],
     results_dir: Path = RESULTS,
+    concurrency: int = 4,
 ) -> int:
     cases = load_cases(split)
     if only:
@@ -159,7 +205,15 @@ async def main(
         cases = [case for case in cases if case.id in only]
     writer = WRITERS[writer_name]()
 
-    runs = [await run_case(writer, case, run) for run in range(1, repeat + 1) for case in cases]
+    gate = asyncio.Semaphore(concurrency)
+
+    async def one(case: ExtractionCase, run: int) -> CaseRun:
+        async with gate:
+            return await run_case(writer, case, run)
+
+    runs = list(
+        await asyncio.gather(*(one(case, run) for run in range(1, repeat + 1) for case in cases))
+    )
     summary = summarize(runs)
     print(f"{split}: {len(cases)} cases x {repeat}, writer {writer_name}\n")
     print_report(summary)
@@ -174,6 +228,9 @@ async def main(
             {
                 "split": split,
                 "writer": writer_name,
+                "model": (settings.extraction_model or settings.agent_model)
+                if writer_name == "extract"
+                else None,
                 "created_at": stamp,
                 "repeat": repeat,
                 "eval_now": EVAL_NOW.isoformat(),
@@ -204,12 +261,21 @@ if __name__ == "__main__":
     parser.add_argument("--writer", choices=list(WRITERS), default="none")
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--case", action="append", default=[], help="run only this case id")
+    parser.add_argument("--concurrency", type=int, default=4, help="model calls at once")
     arguments = parser.parse_args()
-    if arguments.repeat < 1:
-        sys.exit("error: --repeat is at least 1")
+    if arguments.repeat < 1 or arguments.concurrency < 1:
+        sys.exit("error: --repeat and --concurrency are at least 1")
     try:
         sys.exit(
-            asyncio.run(main(arguments.split, arguments.writer, arguments.repeat, arguments.case))
+            asyncio.run(
+                main(
+                    arguments.split,
+                    arguments.writer,
+                    arguments.repeat,
+                    arguments.case,
+                    concurrency=arguments.concurrency,
+                )
+            )
         )
-    except InvalidDataset as error:
+    except (InvalidDataset, RuntimeError) as error:  # RuntimeError: no OPENAI_API_KEY
         sys.exit(f"error: {error}")

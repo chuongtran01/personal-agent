@@ -279,3 +279,105 @@ def test_what_was_recalled_for_a_reply_never_goes_to_the_provider():
         {"role": "user", "content": "Where do I live?"},
         {"role": "assistant", "content": "In Porto."},
     ]
+
+
+# generate: one non-streaming call that answers with JSON ------------------------------------------
+
+
+class FakeOnce:
+    """A ``responses`` client that returns one finished response, or raises."""
+
+    def __init__(self, response=None, raises=None):
+        self.requests = []
+        self._response, self._raises = response, raises
+
+    async def create(self, **request):
+        self.requests.append(request)
+        if self._raises:
+            raise self._raises
+        return self._response
+
+
+USAGE = NS(input_tokens=30, output_tokens=9)
+
+
+def finished(text, status="completed", usage=USAGE):
+    return NS(status=status, output_text=text, usage=usage)
+
+
+def once(response=None, raises=None):
+    responses = FakeOnce(response, raises)
+    return OpenAIClient(model="test-model", client=NS(responses=responses)), responses
+
+
+SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
+
+
+async def generate(client, **kwargs):
+    kwargs.setdefault("system", "extract")
+    kwargs.setdefault("prompt", "the text")
+    kwargs.setdefault("name", "thing")
+    kwargs.setdefault("schema", SCHEMA)
+    return await client.generate(**kwargs)
+
+
+async def test_generate_returns_the_parsed_json_and_the_usage():
+    client, _ = once(finished('{"n": 3}'))
+
+    result = await generate(client)
+
+    assert result.data == {"n": 3}
+    assert result.usage == Usage(30, 9)
+
+
+async def test_generate_asks_for_strict_json_and_keeps_no_copy():
+    client, responses = once(finished("{}"))
+
+    await generate(client, system="be exact", prompt="hello", name="proposals")
+
+    (request,) = responses.requests
+    assert request["model"] == "test-model"
+    assert request["instructions"] == "be exact"
+    assert request["input"] == "hello"
+    assert request["store"] is False
+    assert request["text"] == {
+        "format": {"type": "json_schema", "name": "proposals", "schema": SCHEMA, "strict": True}
+    }
+    assert "stream" not in request and "tools" not in request
+
+
+async def test_generate_with_no_usage_is_zero_tokens():
+    client, _ = once(finished("{}", usage=None))
+
+    assert (await generate(client)).usage == Usage()
+
+
+@pytest.mark.parametrize("status", ["incomplete", "failed", "cancelled"])
+async def test_generate_that_did_not_complete_raises_without_retry(status):
+    client, _ = once(finished('{"n": 1}', status=status))
+
+    with pytest.raises(LLMError) as raised:
+        await generate(client)
+
+    assert raised.value.retryable is False
+    assert status in str(raised.value)
+
+
+@pytest.mark.parametrize("text", ["", "not json", '{"n": '])
+async def test_generate_with_an_answer_that_is_not_json_raises_without_retry(text):
+    client, _ = once(finished(text))
+
+    with pytest.raises(LLMError, match="not JSON") as raised:
+        await generate(client)
+
+    assert raised.value.retryable is False
+
+
+async def test_generate_sorts_provider_failures_like_stream_does():
+    response = httpx.Response(429, request=REQUEST)
+    client, _ = once(raises=openai.RateLimitError("slow down", response=response, body=None))
+
+    with pytest.raises(LLMError) as raised:
+        await generate(client)
+
+    assert raised.value.retryable is True

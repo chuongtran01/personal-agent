@@ -20,6 +20,7 @@ from openai.types.responses import (
 
 from app.agent.llm import (
     Done,
+    Generated,
     HistoryMessage,
     LLMError,
     LLMEvent,
@@ -141,6 +142,36 @@ class OpenAIClient:
             raise to_error(error) from error
         if not finished:
             raise LLMError("the model stream ended without a result", retryable=True)
+
+    async def generate(
+        self, *, system: str, prompt: str, name: str, schema: dict[str, Any]
+    ) -> Generated:
+        try:
+            response = await self._client.responses.create(
+                model=self._model,
+                instructions=system,
+                input=prompt,
+                store=False,
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": name,
+                        "schema": schema,
+                        "strict": True,
+                    }
+                },
+            )
+        except openai.OpenAIError as error:
+            raise to_error(error) from error
+        if response.status != "completed":
+            raise LLMError(f"the model stopped early ({response.status})", retryable=False)
+        try:
+            data = json.loads(response.output_text)
+        except json.JSONDecodeError as error:
+            # An empty text is a refusal or an answer with no text part: the model said no
+            raise LLMError("the model's answer is not JSON", retryable=False) from error
+        usage = response.usage
+        return Generated(data, Usage(usage.input_tokens, usage.output_tokens) if usage else Usage())
 
 
 def _tool_call(item: ResponseFunctionToolCall) -> ToolCall:

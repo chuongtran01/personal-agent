@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     agent_model: str = "gpt-6-luna"
     judge_model: str = "gpt-6-luna"
+    # The call after a turn that decides what to remember (docs/PHASE5.md); empty means the chat model
+    extraction_model: str = ""
     embedding_model: str = "text-embedding-3-small"
     # Must match the vector column in the memories table
     embedding_dimensions: int = 1536

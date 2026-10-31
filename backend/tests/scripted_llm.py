@@ -2,9 +2,11 @@
 
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from app.agent.llm import (
     Done,
+    Generated,
     HistoryMessage,
     LLMEvent,
     TextDelta,
@@ -62,3 +64,35 @@ class ScriptedLLM:
             if isinstance(item, Exception):
                 raise item
             yield item
+
+
+@dataclass(frozen=True)
+class GenerateCall:
+    system: str
+    prompt: str
+    name: str
+    schema: dict[str, Any]
+
+
+def answer(data: Any, usage: Usage | None = None) -> Generated:
+    """A structured answer: the JSON the model "wrote"."""
+    return Generated(data, usage or Usage(20, 8))
+
+
+class ScriptedStructured:
+    """A fake ``StructuredLLM``: each call to ``generate`` returns the next answer or raises it."""
+
+    def __init__(self, *answers: Generated | Exception):
+        self._answers = list(answers)
+        self.calls: list[GenerateCall] = []
+
+    async def generate(
+        self, *, system: str, prompt: str, name: str, schema: dict[str, Any]
+    ) -> Generated:
+        self.calls.append(GenerateCall(system, prompt, name, schema))
+        if not self._answers:
+            raise AssertionError("the model was called more often than the test scripted")
+        item = self._answers.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item

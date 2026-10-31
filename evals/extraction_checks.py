@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from agent_checks import normalize
-from extraction_cases import EVAL_TZ, ExtractionCase, Write
+from extraction_cases import EVAL_NOW, EVAL_TZ, ExtractionCase, Write
 
 
 @dataclass(frozen=True)
@@ -75,8 +75,6 @@ def _matches(want: Write, change: Add | Supersede) -> bool:
     text = normalize(change.content)
     if not all(any(normalize(word) in text for word in group) for group in want.include):
         return False
-    if want.starts and _day(change.valid_from) != want.starts:
-        return False
     if want.ends:
         end = _day(change.valid_until)
         if end not in (want.ends, want.ends + timedelta(days=1)):
@@ -128,6 +126,8 @@ def check_case(case: ExtractionCase, changes: list[Change]) -> Verdict:
         if change.kind not in KINDS:
             failures.append(f"unknown_kind:{change.kind}")
         text = normalize(change.content)
+        if change.valid_from is not None and change.valid_from > EVAL_NOW:
+            failures.append(f"hidden_from_recall:{change.content}")
         stored += [word for word in case.must_not_store if normalize(word) in text]
         if _CARD_LIKE.search(change.content):
             stored.append("card-like number")

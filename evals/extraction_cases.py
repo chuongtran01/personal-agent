@@ -16,8 +16,8 @@ A case holds:
 and what must hold afterwards:
 
 - ``writes``: new memories that must exist. Each names words (``include`` is groups, and every
-  group needs one of its words), and optionally a kind, the memory it ``replaces`` and the dates
-  of an event. A write with no ``replaces`` is a new memory.
+  group needs one of its words), and optionally a kind, the memory it ``replaces`` and the day an
+  event ends. A write with no ``replaces`` is a new memory.
 - ``deletes``: existing keys that must end up deleted.
 - ``no_changes``: nothing at all may change.
 - ``must_not_store``: words that may not appear in any stored text.
@@ -26,6 +26,11 @@ Every change not asked for is a failure, and one that touches a memory the owner
 (a wrong delete or a wrong replacement) or stores a forbidden word is a zero-tolerance one.
 Dates are read in the owner's time zone (``EVAL_TZ``) with the clock at ``EVAL_NOW``, which is a
 Wednesday, so "this Friday" means the same on every day the eval runs.
+
+An event is stored with its end (``valid_until``) and no start: recall hides a memory whose
+``valid_from`` is still ahead of the clock (``docs/PHASE2.md``), so a start date would make next
+week's dinner invisible until the day. The day an event starts stays in its text. A new memory
+whose ``valid_from`` is ahead of the clock is therefore a failure of its own.
 """
 
 import json
@@ -86,8 +91,7 @@ class Write(BaseModel):
     kind: Kind | None
     include: list[list[str]]
     replaces: str | None
-    starts: date | None  # the day an event starts, in the owner's time zone
-    ends: date | None  # the last day; an end stored as the start of the next day also counts
+    ends: date | None  # the last day of an event; an end stored as the start of the next day counts
 
 
 class ExtractionCase(BaseModel):
@@ -140,8 +144,6 @@ def _problem(case: ExtractionCase) -> str | None:
             return "a write names no words"
         if any(not group or not all(word.strip() for word in group) for group in write.include):
             return "a write has an empty group or word"
-        if write.starts and write.ends and write.ends < write.starts:
-            return "an event ends before it starts"
     if not all(word.strip() for word in case.must_not_store):
         return "must_not_store has an empty word"
     required = {word.casefold() for write in case.writes for g in write.include for word in g}
@@ -156,8 +158,8 @@ def _problem(case: ExtractionCase) -> str | None:
         return "a delete case must delete something"
     if case.category == "supersede" and not any(w.replaces for w in case.writes):
         return "a supersede case must replace something"
-    if case.category == "event_date" and not any(w.starts for w in case.writes):
-        return "an event_date case must give a start date"
+    if case.category == "event_date" and not any(w.ends for w in case.writes):
+        return "an event_date case must give the day the event ends"
     if case.category == "multi_fact" and len(case.writes) < 2:
         return "a multi_fact case needs at least two writes"
     if case.category in {"no_write", "assistant_claim", "delete_unclear"} and not case.no_changes:
