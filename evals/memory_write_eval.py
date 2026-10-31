@@ -2,7 +2,7 @@
 
 Run from ``backend/`` (``make eval-memory-write``):
 
-    python ../evals/memory_write_eval.py [--split dev|test] [--writer none|extract] [--repeat N]
+    python ../evals/memory_write_eval.py [--split dev|test] [--writer none|extract|pipeline] [--repeat N]
 
 There is no agent, no database and no search here: a writer gets one case (the memories that
 already exist, the earlier messages, the owner's turn and the assistant's reply) and answers with
@@ -12,8 +12,11 @@ the changes it would make. ``memory_write_checks`` judges them.
 ask for no change. ``--writer extract`` runs the extractor alone (``app/memory/extract.py``) on a
 real model, so it needs ``OPENAI_API_KEY`` and sends the cases' text to the provider: each proposed
 ``add`` becomes an ``Add``. It has no reconciliation yet, so it can neither see the existing
-memories nor delete one: the duplicate, supersede and delete cases fail by design until the
-reconciliation step is added to this writer.
+memories nor delete one: the duplicate, supersede and delete cases fail by design.
+
+``--writer pipeline`` adds reconciliation (``app/memory/reconcile.py``) against the memories
+written in the case, found by cosine similarity on real embeddings, so it also needs the key and
+sends the stored text to the embeddings API. Every decision is read back as the change it makes.
 
 The dev split is the one to tune against, read three times (``--repeat 3``); the test split is
 held out and read once. The gate is zero tolerance: a forbidden word or a card-like number in a
@@ -24,9 +27,10 @@ one exits with status 1.
 import argparse
 import asyncio
 import json
+import math
 import sys
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -37,7 +41,9 @@ from memory_write_checks import Add, Change, Delete, Supersede, check_case
 from app.agent.llm import StructuredLLM
 from app.agent.openai_client import OpenAIClient
 from app.config import settings
+from app.memory.embeddings import Embedder, OpenAIEmbedder
 from app.memory.extract import ContextMessage, extract
+from app.memory.reconcile import Candidate, reconcile
 
 ROOT = Path(__file__).resolve().parent
 RESULTS = ROOT / "results"
@@ -48,6 +54,7 @@ class Outcome:
     changes: list[Change] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
+    notes: list[str] = field(default_factory=list)  # how the writer got there, for a failure
 
 
 class Writer(Protocol):
@@ -84,7 +91,107 @@ class ExtractOnly:
         return Outcome(changes, found.usage.input_tokens, found.usage.output_tokens)
 
 
-WRITERS = {"none": NoWrites, "extract": ExtractOnly}
+class InlineNeighbours:
+    """``Neighbours`` over the memories written inside a case, by cosine similarity in Python.
+
+    Only active memories are candidates, as in the database. A candidate's id is its position in
+    the case's list, and ``keys`` maps it back to the case's own key."""
+
+    def __init__(self, case: MemoryWriteCase, embedder: Embedder, vectors: dict[str, list[float]]):
+        self._embedder = embedder
+        self._vectors = vectors
+        self._active = [(n, m) for n, m in enumerate(case.existing) if m.status == "active"]
+        self.keys = {n: m.key for n, m in self._active}
+
+    async def _vector(self, texts: list[str]) -> list[list[float]]:
+        missing = [t for t in dict.fromkeys(texts) if t not in self._vectors]
+        if missing:
+            self._vectors.update(zip(missing, await self._embedder.embed(missing), strict=True))
+        return [self._vectors[t] for t in texts]
+
+    async def nearest(self, text: str, limit: int) -> list[Candidate]:
+        if not self._active:
+            return []
+        query, *stored = await self._vector([text, *(m.content for _, m in self._active)])
+        found = [
+            Candidate(
+                n, m.kind, m.content, EVAL_NOW - timedelta(days=30), "owner", _cosine(query, v)
+            )
+            for (n, m), v in zip(self._active, stored, strict=True)
+        ]
+        return sorted(found, key=lambda c: (-c.similarity, c.id))[:limit]
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
+    return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))
+
+
+class _Recording:
+    """Wraps a lookup and keeps what it found, to read the similarities when a case fails."""
+
+    def __init__(self, inner: InlineNeighbours):
+        self._inner = inner
+        self.keys = inner.keys
+        self.notes: list[str] = []
+
+    async def nearest(self, text: str, limit: int) -> list[Candidate]:
+        found = await self._inner.nearest(text, limit)
+        top = ", ".join(f"{self.keys[c.id]} {c.similarity:.2f}" for c in found[:3])
+        self.notes.append(f"nearest to {text!r}: {top or 'nothing stored'}")
+        return found
+
+
+class Pipeline:
+    """The write path as far as it is built: extract, then reconcile against the case's memories.
+
+    Every decision becomes the change it would make: a new memory, a replacement, a delete, or
+    nothing when a stored memory already says it or nothing matches a request to forget."""
+
+    def __init__(self, llm: StructuredLLM | None = None, embedder: Embedder | None = None):
+        self._llm = llm or OpenAIClient(model=settings.extraction_model or settings.agent_model)
+        self._embedder = embedder or OpenAIEmbedder()
+        self._vectors: dict[str, list[float]] = {}
+
+    async def run(self, case: MemoryWriteCase, now: datetime) -> Outcome:
+        found = await extract(
+            self._llm,
+            owner=case.owner,
+            now=now,
+            timezone=EVAL_TZ.key,
+            context=[ContextMessage(m.role, m.text) for m in case.context],
+            reply=case.reply,
+        )
+        lookup = _Recording(InlineNeighbours(case, self._embedder, self._vectors))
+        done = await reconcile(self._llm, lookup, found.proposals, owner=case.owner)
+
+        changes: list[Change] = []
+        notes = lookup.notes
+        for decision in done.decisions:
+            keys = [lookup.keys[i] for i in decision.memory_ids]
+            proposal = decision.proposal
+            kind = proposal.kind or "fact"
+            notes.append(f"{decision.action} {keys} <- {proposal.op} {proposal.content!r}")
+            if decision.action == "add":
+                changes.append(Add(kind, proposal.content, None, proposal.valid_until))
+            elif decision.action == "supersede":
+                changes.append(
+                    Supersede(
+                        keys[0], kind, proposal.content, None, proposal.valid_until, tuple(keys[1:])
+                    )
+                )
+            elif decision.action == "delete":
+                changes += [Delete(key) for key in keys]
+        if done.dropped:
+            notes.append(f"dropped {done.dropped} proposal(s) the model's answer could not back")
+        usage = (
+            found.usage.input_tokens + done.usage.input_tokens,
+            found.usage.output_tokens + done.usage.output_tokens,
+        )
+        return Outcome(changes, *usage, notes)
+
+
+WRITERS = {"none": NoWrites, "extract": ExtractOnly, "pipeline": Pipeline}
 
 
 @dataclass(frozen=True)
@@ -102,6 +209,7 @@ class CaseRun:
     output_tokens: int
     proposed: tuple[str, ...] = ()  # what the writer changed, to read a failure without a rerun
     needs_reconciliation: bool = False  # the case has existing memories (see the cases module)
+    notes: tuple[str, ...] = ()  # how the writer got to its changes
 
 
 def _describe(change: Change) -> str:
@@ -145,6 +253,7 @@ async def run_case(writer: Writer, case: MemoryWriteCase, run: int) -> CaseRun:
         output_tokens=outcome.output_tokens,
         proposed=tuple(_describe(change) for change in outcome.changes),
         needs_reconciliation=case.needs_reconciliation,
+        notes=tuple(outcome.notes),
     )
 
 
@@ -199,6 +308,8 @@ def print_failures(runs: list[CaseRun]) -> None:
             print(f"  {item.id} ({item.category}): {', '.join(item.failures)}")
             for line in item.proposed:
                 print(f"      wrote: {line}")
+            for line in item.notes:
+                print(f"      note: {line}")
     if not seen:
         print("  none")
 

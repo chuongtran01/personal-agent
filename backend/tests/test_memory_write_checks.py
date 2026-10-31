@@ -14,6 +14,7 @@ def write(include, **rest):
         "include": include,
         "replaces": None,
         "ends": None,
+        "optional": False,
         **rest,
     }
 
@@ -248,3 +249,61 @@ def test_a_run_with_several_failures_lists_each():
         "unexpected_write:X1 trip",
         "stored:X1",
     )
+
+
+def test_a_replacement_that_also_replaces_another_memory_is_judged_on_each():
+    case = make(existing=[CITY, JOB], writes=[write([["Porto"]], replaces="city")])
+    both = Supersede("city", "fact", "The owner lives in Porto.", also=("job",))
+
+    verdict = check_case(case, [both])
+
+    assert verdict.wrong_changes == ("replace:job",)
+    assert not verdict.passed
+    assert check_case(case, [Supersede("city", "fact", "Porto.", also=())]).passed
+
+
+def test_a_replacement_that_also_names_an_unknown_memory_is_wrong():
+    case = make(existing=[CITY], writes=[write([["Porto"]], replaces="city")])
+
+    verdict = check_case(case, [Supersede("city", "fact", "Porto.", also=("ghost",))])
+
+    assert verdict.wrong_changes == ("replace:ghost (not an active memory)",)
+
+
+def test_an_optional_write_may_be_there_or_missing():
+    case = make(writes=[write([["Miso"]]), write([["cat"]], optional=True)])
+
+    assert check_case(case, [Add("fact", "Miso."), Add("fact", "A cat.")]).passed
+    assert check_case(case, [Add("fact", "Miso.")]).passed
+
+
+def test_a_required_write_still_fails_when_only_the_optional_one_is_there():
+    case = make(writes=[write([["Miso"]]), write([["cat"]], optional=True)])
+
+    verdict = check_case(case, [Add("fact", "A cat.")])
+
+    assert verdict.failures == ("missing_write:Miso",)
+
+
+def test_an_optional_write_cannot_take_the_change_a_required_one_needs():
+    case = make(writes=[write([["cat"]], optional=True), write([["cat"]])])
+
+    assert check_case(case, [Add("fact", "A cat.")]).passed
+
+
+def test_a_change_no_write_covers_is_still_unexpected_beside_an_optional_one():
+    case = make(writes=[write([["Miso"]]), write([["cat"]], optional=True)])
+
+    verdict = check_case(case, [Add("fact", "Miso."), Add("fact", "A cat."), Add("fact", "A dog.")])
+
+    assert verdict.failures == ("unexpected_write:A dog.",)
+
+
+def test_an_optional_replacement_is_judged_like_any_other_when_present():
+    case = make(
+        existing=[CITY],
+        writes=[write([["Porto"]], replaces="city"), write([["Braga"]], optional=True)],
+    )
+
+    assert check_case(case, [Supersede("city", "fact", "Porto.")]).passed
+    assert not check_case(case, [Add("fact", "Braga.")]).passed

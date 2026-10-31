@@ -15,7 +15,7 @@ Two pieces of earlier phases are completed here. Phase 3 seeds the memory once p
 
 - [x] **Memory write eval and cases first**: `evals/memory_write_cases.py`, `evals/memory_write_checks.py`, `evals/memory_write_eval.py`, `evals/datasets/memory_write.{dev,test}.jsonl`. Fixed turns, each with the memory changes it must and must not produce, checked by code. Written, and run against a stub that stores nothing (the baseline), before the extractor exists
 - [x] **Extractor**: `backend/app/memory/extract.py`. One model call after a turn: the owner's messages in, proposed changes out (`add`, `delete`) as structured output, validated before anything uses them
-- [ ] **Reconciliation**: `backend/app/memory/reconcile.py`. Each proposal is compared with the closest active memories; the result is `noop`, `add`, `supersede(id)` or `delete(id)`, and the rules that keep it safe are code, not prompt
+- [x] **Reconciliation**: `backend/app/memory/reconcile.py`. Each proposal is compared with the closest active memories; the result is `noop`, `add`, `supersede(id)` or `delete(id)`, and the rules that keep it safe are code, not prompt
 - [ ] **Write functions with events**: `backend/app/memory/write.py`. `add`, `supersede`, `delete`, `restore`, each in one transaction with its `memory_events` row and the reason, so any change can be explained and undone
 - [ ] **Filter before write**: `backend/app/memory/filter.py`. Card numbers, passwords, PINs and long identifiers are dropped in code whatever the model proposed
 - [ ] **Agent integration**: the loop starts extraction after the reply is stored and `done` is sent; a failure there never touches the reply; a constructor option turns it off for the memory-off eval
@@ -59,15 +59,15 @@ Questions, greetings, small talk, requests ("book me a table"), and what the ass
 
 ### Reconciliation
 
-For each proposal the nearest active memories are found (vector search over active, owner memories, the same filter recall uses, so a replaced or deleted memory is never a candidate). Then:
+For each proposal the nearest active memories are found by vector search. Unlike recall this does not hide ended events, facts that start later or an email's memory: an ended event must still be found to be forgotten, and a repeat is a repeat whatever its dates. What it leaves out is what is already gone, replaced and deleted memories, so those are never candidates. Then:
 
 | Case | What happens |
 | --- | --- |
 | No candidate closer than the threshold | `add`, with no second model call |
 | Candidates exist | One call with the proposal and up to five candidates, each with its id and date; it answers `same` (noop), `replaces` plus an id (supersede), `new` (add), or for a delete the ids that match |
-| The model names an id that was not shown | The proposal is dropped; ids are checked in code |
+| The model names an id that was not shown | The proposal is dropped, a delete too (one stray id makes the whole answer untrustworthy); ids are checked in code |
 | A delete matches nothing | Nothing is deleted, and nothing is stored in its place |
-| A delete matches several | Only the ones the model names and that were shown; the number is capped per turn |
+| A delete matches several | The ones the model names, all of which must have been shown; at most five deleted per turn |
 
 Supersede writes a new row, sets the old one `superseded` with `superseded_by`, and sets the old row's `valid_until` to the time of the message, so history questions still work. Nothing is overwritten and nothing is hard-deleted.
 
@@ -89,7 +89,7 @@ An edit in the web app is a supersede (a new row with the new text, the old one 
 
 - `evals/memory_write_cases.py`: the row schema and loader. Every field is required, rows are checked for consistency on load (a change names an active memory, a case checks something, no word is both required and forbidden), and the two splits may not share an input.
 - `evals/memory_write_checks.py`: the checks, with no model and no database. The step under test answers with `Add`, `Supersede(target)` and `Delete(target)`, naming existing memories by a case key; `check_case` returns the failures, plus two zero-tolerance lists apart from the score: `stored` (a forbidden word, or a card-like number found by the check itself, in a new memory) and `wrong_changes` (a delete or replacement the owner did not mean, or of a memory that is not active or was not shown).
-- `evals/memory_write_eval.py`: the runner. A writer takes a case and the fixed clock and returns an `Outcome` (changes and tokens). `--writer none` is the baseline that stores nothing. A writer that raises fails only its case. Runs go through `--concurrency` model calls at once (4 by default). The gate is zero `stored` and zero `wrong_changes`, exit status 1 otherwise. Results go to `evals/results/`.
+- `evals/memory_write_eval.py`: the runner. A writer takes a case and the fixed clock and returns an `Outcome` (changes and tokens). `--writer none` is the baseline that stores nothing; `--writer extract` runs the extractor alone; `--writer pipeline` adds reconciliation. A writer that raises fails only its case. Runs go through `--concurrency` model calls at once (4 by default). The gate is zero `stored` and zero `wrong_changes`, exit status 1 otherwise. Results go to `evals/results/`.
 - `evals/datasets/memory_write.dev.jsonl` (37 cases) and `.test.jsonl` (16): eleven categories, all in both splits. Each trap in `data/memory_traps.yaml` has a case. The clock is Wednesday 28 October 2026 in Lisbon, so "this Friday" is 30 October and "3 March" is 3 March 2027.
 
 Decisions made while building it:
@@ -115,7 +115,23 @@ Decisions made while building it:
 
 **First results, extractor alone (`--writer extract`), dev, three runs, 111 cases played:** 84 passed, which reads as two groups. The 26 cases with no existing memories (78 runs) passed in all three runs: 18 of 18 adds, 9 of 9 assistant claims, 9 of 9 event dates, 6 of 6 multi-fact, 18 of 18 no-write, 6 of 6 non-English, 9 of 9 sensitive, and the five wordings of one fact (`e021`) written once. The 11 cases with existing memories (33 runs) passed 6, and only because this writer ignores delete proposals: they are the two "forget" requests with nothing to match (`e029`, `e030`). The other nine fail by design, three times each, because they need reconciliation: two duplicates (`e019`, `e020`: it stores the repeat, which it cannot see), four supersedes (it adds the new fact, which is right, but cannot replace the old one) and three deletes (it cannot find a memory). Zero forbidden words stored, zero wrong changes. About 670 input and 80 output tokens a turn, most of it the instructions. The sensitive cases passed on the model alone, with no filter yet; the filter is still the guarantee. The test split has not been run: it is read once, with the whole pipeline.
 
-One thing to watch in reconciliation: for "Actually, I hate mornings. I run in the evening." the extractor wrote two preferences ("dislikes mornings", "runs in the evening"). The case expects one write that replaces the morning memory, so how the second one is handled will show in the reconciled result.
+One thing it showed for reconciliation: for "Actually, I hate mornings. I run in the evening." the extractor wrote two preferences ("dislikes mornings", "runs in the evening"), or sometimes one. How reconciliation handled that is under "Reconciliation, as built".
+
+## Reconciliation, as built
+
+`backend/app/memory/reconcile.py` and `neighbours.py`. `reconcile(llm, neighbours, proposals, owner=...)` returns decisions and writes nothing, so a failure part-way leaves memory untouched; the write functions apply the decisions with their events.
+
+- **Lookup:** `Neighbours.nearest(text, limit)` is a one-method protocol. `DbNeighbours` is the Postgres version (cosine distance over active rows with an embedding, any validity and source); the eval has an in-memory one over the memories written in a case. Candidates below `RECONCILE_MIN_SIMILARITY` (0.35) are not asked about, so a statement unlike anything stored is added with no model call.
+- **Decision call:** for an add, `same` (a stored memory already says it: nothing is written), `replaces` (it makes a stored memory untrue: supersede, with every memory named) or `new`; for a delete, the ids the owner meant. Up to five candidates are shown with id, kind, source and date, and the model is told to prefer `new` when unsure: a stored near-duplicate is harmless and a lost fact is not. The similarity is not shown, so it does not anchor the answer.
+- **The owner's own words go with it.** The proposals are the extractor's rewording, which loses "actually", "I switched" and the like, the strongest sign of a replacement. The first pipeline run missed `e023` because the reconciler saw only "The owner runs in the evening." beside "likes running in the morning" and, told to prefer `new`, kept both.
+- **Checked in code:** every id must be one that was shown (a stray id drops the proposal, counted, and not repaired); `same` or `replaces` with no id is dropped; at most five memories deleted per turn; a memory replaced or deleted by an earlier decision of the same turn is not offered to the next, so two proposals cannot replace one memory twice. Reasons for `memory_events` are fixed phrases that never quote a memory.
+- **Tests:** 49 for `reconcile`, 7 for `DbNeighbours` (against the test database) and 14 for the pipeline writer. Twenty deliberate breaks across the three (a strict floor, stray ids accepted, a `True` read as id 1, the cap, the already-replaced filter, an unescaped memory, a reason that quotes a memory, wrong order, no status filter, and others) each failed a test, after three of them first survived and the tests were tightened.
+
+**What the similarity numbers say.** Real matches in the dev cases scored from 0.48 (a sister's allergy, correctly deleted when asked to forget the sister) to 1.00; unrelated neighbours scored 0.35 to 0.52. The two ranges overlap, so no floor separates them and the model has to decide. 0.35 is kept as a loose floor below the lowest true match, only to skip the call for something unlike everything stored. With a store this small (two or three memories per case) the five-candidate limit is not doing any filtering yet; a larger store is where the floor and the limit start to matter, and phase 9 should look again.
+
+**Eval changes made for it.** A write can be `optional` (`e023` is a message with two facts: the morning preference must be replaced, by either memory, and the evening run may be a second one; three runs produced one merged memory, or a replacement plus an addition, and all are right). `e023` was revised after the first pipeline run for that reason. Changes that name a memory beyond the first (`Supersede.also`) are judged on each target.
+
+**Results, the pipeline (`--writer pipeline`), dev, three runs, 111 cases played:** 111 passed. The 26 cases with no stored memory: 78 of 78. The 11 with stored memories: 33 of 33 (two duplicates, four supersedes, three deletes and the two "forget" requests with nothing to match, which now pass because reconciliation really declines). Zero forbidden words stored, zero wrong changes. About 760 input and 90 output tokens a turn across both steps, against about 670 and 85 for the extractor alone: reconciliation adds roughly a tenth, because most turns store nothing or find nothing close. The test split has not been run: it is read once, when the whole write path (filter, write functions and the loop) is in. All of this is on the dev split, where the prompts and two cases were adjusted, so 111 of 111 is the number the test split has to confirm, not a result of its own.
 
 ## Memory API
 

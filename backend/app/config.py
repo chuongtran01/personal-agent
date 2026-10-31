@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     judge_model: str = "gpt-6-luna"
     # The call after a turn that decides what to remember (docs/PHASE5.md); empty means the chat model
     extraction_model: str = ""
+    # A stored memory is a candidate for reconciliation only when its cosine similarity to the new
+    # statement is at least this; set from the dev cases (docs/PHASE5.md)
+    reconcile_min_similarity: float = 0.35
     embedding_model: str = "text-embedding-3-small"
     # Must match the vector column in the memories table
     embedding_dimensions: int = 1536

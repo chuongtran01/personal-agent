@@ -14,7 +14,9 @@ ROW = {
     "context": [],
     "owner": ["I moved to Porto."],
     "reply": None,
-    "writes": [{"kind": None, "include": [["Porto"]], "replaces": "city", "ends": None}],
+    "writes": [
+        {"kind": None, "include": [["Porto"]], "replaces": "city", "ends": None, "optional": False}
+    ],
     "deletes": [],
     "no_changes": False,
     "must_not_store": [],
@@ -209,3 +211,27 @@ def test_the_committed_cases_that_replace_or_delete_all_need_reconciliation():
         for case in cases:
             if case.deletes or any(write.replaces for write in case.writes):
                 assert case.needs_reconciliation, case.id
+
+
+def test_a_case_with_only_optional_writes_checks_nothing(tmp_path):
+    only_optional = [{**ROW["writes"][0], "replaces": None, "optional": True}]
+
+    broken(tmp_path, "checks nothing", category="add", existing=[], writes=only_optional)
+
+
+def test_an_optional_write_beside_a_required_one_loads(tmp_path):
+    optional = {**ROW["writes"][0], "replaces": None, "optional": True, "include": [["Braga"]]}
+
+    (case,) = load(tmp_path, {**ROW, "writes": [*ROW["writes"], optional]})
+
+    assert [w.optional for w in case.writes] == [False, True]
+
+
+def test_an_optional_write_alone_is_fine_when_the_case_deletes_something(tmp_path):
+    optional = {**ROW["writes"][0], "replaces": None, "optional": True}
+
+    (case,) = load(
+        tmp_path, {**ROW, "category": "delete", "writes": [optional], "deletes": ["city"]}
+    )
+
+    assert case.deletes == ["city"]

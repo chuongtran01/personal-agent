@@ -3,10 +3,14 @@ import json
 from datetime import datetime
 
 import memory_write_eval
+import pytest
 from memory_cases import EVAL_NOW
 from memory_write_cases import EVAL_TZ, load_cases
-from memory_write_checks import Add, Delete
+from memory_write_checks import Add, Delete, Supersede
 from memory_write_eval import NoWrites, Outcome, run_case, summarize
+from scripted_llm import answer
+
+from app.agent.llm import Usage
 
 
 def case(id):
@@ -269,3 +273,184 @@ def test_the_summary_and_report_count_the_two_stages_apart(capsys):
 
 def test_an_empty_stage_is_zero_of_zero():
     assert summarize([])["by_stage"]["alone"] == {"runs": 0, "passed": 0}
+
+
+# The pipeline writer: extract, then reconcile against the case's memories -----------------------
+
+
+class WordEmbedder:
+    """Vectors from word overlap, so similar sentences are near and no key is needed."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def embed(self, texts):
+        self.calls.append(list(texts))
+        out = []
+        for text in texts:
+            vector = [0.0] * 128
+            for word in text.lower().replace(".", "").split():
+                vector[sum(map(ord, word)) % 128] += 1.0
+            norm = sum(v * v for v in vector) ** 0.5
+            out.append([v / norm for v in vector])
+        return out
+
+
+def proposals(*items):
+    return answer({"proposals": list(items)})
+
+
+def add_proposal(content, kind="fact", until=None):
+    return {"op": "add", "kind": kind, "content": content, "valid_until": until}
+
+
+def delete_proposal(content):
+    return {"op": "delete", "kind": None, "content": content, "valid_until": None}
+
+
+def verdict(decision, *ids):
+    return answer({"decision": decision, "memory_ids": list(ids)}, Usage(100, 5))
+
+
+def forget(*ids):
+    return answer({"memory_ids": list(ids)}, Usage(60, 2))
+
+
+async def play(case_id, *answers):
+    from memory_write_eval import Pipeline
+    from scripted_llm import ScriptedStructured
+
+    llm = ScriptedStructured(*answers)
+    outcome = await Pipeline(llm, WordEmbedder()).run(case(case_id), EVAL_NOW)
+    return outcome, llm
+
+
+async def test_a_changed_fact_replaces_the_stored_one():
+    outcome, llm = await play(
+        "e022", proposals(add_proposal("The owner lives in Porto.")), verdict("replaces", 0)
+    )
+
+    assert outcome.changes == [Supersede("city", "fact", "The owner lives in Porto.")]
+    assert len(llm.calls) == 2
+
+
+async def test_a_replacement_is_named_by_the_cases_key_not_its_position():
+    outcome, _ = await play(
+        "e024", proposals(add_proposal("The owner lives in Lisbon.")), verdict("replaces", 1)
+    )
+
+    assert outcome.changes == [Supersede("city", "fact", "The owner lives in Lisbon.")]
+
+
+async def test_a_replacement_of_several_memories_keeps_the_extra_ones():
+    outcome, _ = await play(
+        "e025",
+        proposals(add_proposal("The owner's phone provider is NOS.")),
+        verdict("replaces", 0, 1),
+    )
+
+    (change,) = outcome.changes
+    assert (change.target, change.also) == ("phone", ("dentist",))
+
+
+async def test_a_repeat_changes_nothing_and_says_which_memory_had_it():
+    outcome, _ = await play(
+        "e019",
+        proposals(add_proposal("The owner is vegetarian.", "preference")),
+        verdict("same", 0),
+    )
+
+    assert outcome.changes == []
+    assert any(note.startswith("noop ['diet']") for note in outcome.notes)
+
+
+async def test_a_new_fact_with_nothing_near_is_added_with_one_model_call():
+    outcome, llm = await play("e019", proposals(add_proposal("Silva treats my teeth.", "fact")))
+
+    assert [type(c).__name__ for c in outcome.changes] == ["Add"]
+    assert len(llm.calls) == 1
+
+
+async def test_a_forget_request_deletes_the_memory_the_model_names():
+    outcome, _ = await play(
+        "e026",
+        proposals(delete_proposal("The owner's knee surgery in March.")),
+        forget(0),
+    )
+
+    assert outcome.changes == [Delete("surgery")]
+
+
+async def test_a_forget_request_that_matches_nothing_deletes_nothing():
+    outcome, _ = await play("e026", proposals(delete_proposal("The owner's cat.")))
+
+    assert outcome.changes == []
+
+
+async def test_an_event_end_survives_the_pipeline():
+    outcome, _ = await play("e010", proposals(add_proposal("Dentist.", "event", "2027-03-03")))
+
+    (change,) = outcome.changes
+    assert change.valid_until is not None and change.valid_until.day == 4
+
+
+async def test_tokens_of_both_steps_are_added_and_the_nearest_lookups_are_noted():
+    outcome, _ = await play(
+        "e022",
+        proposals(add_proposal("The owner lives in Porto.")),
+        verdict("replaces", 0),
+    )
+
+    assert (outcome.input_tokens, outcome.output_tokens) == (120, 13)
+    assert any("nearest to 'The owner lives in Porto.': city 0." in n for n in outcome.notes)
+
+
+async def test_a_proposal_the_answer_could_not_back_is_noted_as_dropped():
+    outcome, _ = await play(
+        "e022", proposals(add_proposal("The owner lives in Porto.")), verdict("replaces", 99)
+    )
+
+    assert outcome.changes == []
+    assert any(note.startswith("dropped 1") for note in outcome.notes)
+
+
+async def test_only_active_memories_are_candidates_and_vectors_are_kept_between_lookups():
+    from memory_write_eval import InlineNeighbours
+
+    embedder = WordEmbedder()
+    inline = InlineNeighbours(case("e024"), embedder, {})  # one superseded, one active
+
+    first = await inline.nearest("The owner lives in Lisbon.", 5)
+    again = await inline.nearest("The owner lives in Lisbon.", 5)
+
+    assert [inline.keys[c.id] for c in first] == ["city"] == [inline.keys[c.id] for c in again]
+    assert first[0].similarity == pytest.approx(0.8, abs=0.01)
+    assert len(embedder.calls) == 1  # the text and the stored memory, embedded once
+
+
+async def test_a_case_with_no_stored_memory_embeds_nothing():
+    from memory_write_eval import InlineNeighbours
+
+    embedder = WordEmbedder()
+
+    assert await InlineNeighbours(case("e010"), embedder, {}).nearest("x", 5) == []
+    assert embedder.calls == []
+
+
+async def test_candidates_come_back_nearest_first_and_limited():
+    from memory_write_eval import InlineNeighbours
+
+    inline = InlineNeighbours(case("e030"), WordEmbedder(), {})  # diet, dog, city
+
+    found = await inline.nearest("The owner's dog is called Pepa.", 2)
+
+    assert len(found) == 2 and inline.keys[found[0].id] == "dog"
+    assert found[0].similarity >= found[1].similarity
+
+
+async def test_the_pipeline_gives_reconciliation_the_owners_own_words():
+    _, llm = await play(
+        "e022", proposals(add_proposal("The owner lives in Porto.")), verdict("new")
+    )
+
+    assert "<owner_said>\nI moved to Porto last week.\n</owner_said>" in llm.calls[1].prompt

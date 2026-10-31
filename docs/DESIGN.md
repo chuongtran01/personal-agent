@@ -88,7 +88,7 @@ Each memory carries its provenance (`source_message_id`, `source_kind`), so a re
 
 This is the part of the project that is new.
 
-**Write path.** After a turn ends, a separate extraction step reads the turn and proposes memory changes: add, update (supersede), or delete. A reconciliation step compares each proposal with the existing memories before anything is written: the same fact again is a no-op, a changed fact supersedes the old one, a contradiction is resolved in favour of the newer owner statement and recorded in `memory_events`. Extraction never runs on the model's own answer alone, and a memory is never written from text that came from a tool result unless it is marked `external`.
+**Write path.** After a turn ends, a separate extraction step reads the turn and proposes memory changes in the owner's words: add or delete. It never sees what is stored, so it cannot tell a repeat or a changed fact from a new one. A reconciliation step compares each proposal with the existing memories before anything is written: the same fact again is a no-op, a changed fact supersedes the old one, a contradiction is resolved in favour of the newer owner statement and recorded in `memory_events`. Extraction never runs on the model's own answer alone, and a memory is never written from text that came from a tool result unless it is marked `external`.
 
 **Read path.** Before each model call the loop retrieves the memories relevant to the owner's message, using hybrid search (keyword plus vector) with a recency term, and puts them in the prompt as labelled data with their dates and sources. Only `active` memories are read. `last_used_at` is updated so unused memories can be reviewed.
 

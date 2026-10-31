@@ -17,7 +17,8 @@ and what must hold afterwards:
 
 - ``writes``: new memories that must exist. Each names words (``include`` is groups, and every
   group needs one of its words), and optionally a kind, the memory it ``replaces`` and the day an
-  event ends. A write with no ``replaces`` is a new memory.
+  event ends. A write with no ``replaces`` is a new memory. An ``optional`` write may or may not
+  be there: a message with two facts can be stored as one memory or as two, and both are right.
 - ``deletes``: existing keys that must end up deleted.
 - ``no_changes``: nothing at all may change.
 - ``must_not_store``: words that may not appear in any stored text.
@@ -95,6 +96,7 @@ class Write(BaseModel):
     include: list[list[str]]
     replaces: str | None
     ends: date | None  # the last day of an event; an end stored as the start of the next day counts
+    optional: bool  # fine to have and fine to miss; it only lets a change count as asked for
 
 
 class MemoryWriteCase(BaseModel):
@@ -163,7 +165,7 @@ def _problem(case: MemoryWriteCase) -> str | None:
 
     if case.no_changes and (case.writes or case.deletes):
         return "no_changes with changes asked for"
-    if not (case.no_changes or case.writes or case.deletes):
+    if not (case.no_changes or case.deletes or any(not w.optional for w in case.writes)):
         return "checks nothing: ask for a change or set no_changes"
     if case.category == "delete" and not case.deletes:
         return "a delete case must delete something"

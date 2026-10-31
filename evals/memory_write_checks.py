@@ -28,13 +28,14 @@ class Add:
 
 @dataclass(frozen=True)
 class Supersede:
-    """A new memory that replaces an existing one."""
+    """A new memory that replaces an existing one, and ``also`` others it makes untrue."""
 
     target: str
     kind: str
     content: str
     valid_from: datetime | None = None
     valid_until: datetime | None = None
+    also: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -99,24 +100,27 @@ def check_case(case: MemoryWriteCase, changes: list[Change]) -> Verdict:
         if isinstance(change, Add):
             continue
         what = "delete" if isinstance(change, Delete) else "replace"
-        if change.target not in active:
-            wrong.append(f"{what}:{change.target} (not an active memory)")
-        elif isinstance(change, Delete) and change.target not in meant_deleted:
-            wrong.append(f"delete:{change.target}")
-        elif isinstance(change, Supersede) and change.target not in meant_replaced:
-            wrong.append(f"replace:{change.target}")
+        targets = [change.target] if isinstance(change, Delete) else [change.target, *change.also]
+        for target in targets:
+            if target not in active:
+                wrong.append(f"{what}:{target} (not an active memory)")
+            elif isinstance(change, Delete) and target not in meant_deleted:
+                wrong.append(f"delete:{target}")
+            elif isinstance(change, Supersede) and target not in meant_replaced:
+                wrong.append(f"replace:{target}")
     failures += [f"wrong_change:{item}" for item in wrong]
 
     deleted = {change.target for change in changes if isinstance(change, Delete)}
     failures += [f"not_deleted:{key}" for key in case.deletes if key not in deleted]
 
     unmatched = [change for change in changes if not isinstance(change, Delete)]
-    for want in case.writes:
+    # Required writes pick their change first, so an optional one cannot take what they need
+    for want in sorted(case.writes, key=lambda write: write.optional):
         found = next((change for change in unmatched if _matches(want, change)), None)
-        if found is None:
-            failures.append(f"missing_write:{_describe(want)}")
-        else:
+        if found is not None:
             unmatched.remove(found)
+        elif not want.optional:
+            failures.append(f"missing_write:{_describe(want)}")
     failures += [f"unexpected_write:{change.content}" for change in unmatched]
 
     stored: list[str] = []
