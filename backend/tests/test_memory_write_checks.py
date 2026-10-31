@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
-from extraction_cases import EVAL_NOW, EVAL_TZ, ExtractionCase, load_all
-from extraction_checks import Add, Delete, Supersede, check_case
+from memory_write_cases import EVAL_NOW, EVAL_TZ, MemoryWriteCase, load_all
+from memory_write_checks import Add, Delete, Supersede, check_case
 
 CITY = {"key": "city", "kind": "fact", "content": "The owner lives in Lisbon.", "status": "active"}
 JOB = {"key": "job", "kind": "fact", "content": "The owner works at Acme.", "status": "active"}
@@ -18,7 +18,7 @@ def write(include, **rest):
     }
 
 
-def make(**change) -> ExtractionCase:
+def make(**change) -> MemoryWriteCase:
     row = {
         "id": "x",
         "category": "add",
@@ -33,7 +33,7 @@ def make(**change) -> ExtractionCase:
         "note": None,
         **change,
     }
-    return ExtractionCase.model_validate(row)
+    return MemoryWriteCase.model_validate(row)
 
 
 def at(year, month, day, hour=0):
@@ -41,7 +41,7 @@ def at(year, month, day, hour=0):
 
 
 def test_the_committed_cases_are_all_failed_by_no_changes_unless_they_ask_for_none():
-    from extraction_checks import check_case as check
+    from memory_write_checks import check_case as check
 
     for cases in load_all().values():
         for case in cases:

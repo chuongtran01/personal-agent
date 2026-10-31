@@ -1,12 +1,12 @@
-"""Extraction eval: gives each case to the memory-writing step and checks its changes in code.
+"""Memory write eval: gives each case to the memory-writing step and checks its changes in code.
 
-Run from ``backend/`` (``make eval-extraction``):
+Run from ``backend/`` (``make eval-memory-write``):
 
-    python ../evals/extraction_eval.py [--split dev|test] [--writer none|extract] [--repeat N]
+    python ../evals/memory_write_eval.py [--split dev|test] [--writer none|extract] [--repeat N]
 
 There is no agent, no database and no search here: a writer gets one case (the memories that
 already exist, the earlier messages, the owner's turn and the assistant's reply) and answers with
-the changes it would make. ``extraction_checks`` judges them.
+the changes it would make. ``memory_write_checks`` judges them.
 
 ``--writer none`` is the baseline that stores nothing, so what it passes is exactly the cases that
 ask for no change. ``--writer extract`` runs the extractor alone (``app/memory/extract.py``) on a
@@ -30,9 +30,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
-from extraction_cases import EVAL_TZ, SPLITS, ExtractionCase, InvalidDataset, load_cases
-from extraction_checks import Add, Change, Delete, Supersede, check_case
 from memory_cases import EVAL_NOW
+from memory_write_cases import EVAL_TZ, SPLITS, InvalidDataset, MemoryWriteCase, load_cases
+from memory_write_checks import Add, Change, Delete, Supersede, check_case
 
 from app.agent.llm import StructuredLLM
 from app.agent.openai_client import OpenAIClient
@@ -51,13 +51,13 @@ class Outcome:
 
 
 class Writer(Protocol):
-    async def run(self, case: ExtractionCase, now: datetime) -> Outcome: ...
+    async def run(self, case: MemoryWriteCase, now: datetime) -> Outcome: ...
 
 
 class NoWrites:
     """The baseline: never changes anything."""
 
-    async def run(self, case: ExtractionCase, now: datetime) -> Outcome:
+    async def run(self, case: MemoryWriteCase, now: datetime) -> Outcome:
         return Outcome()
 
 
@@ -67,7 +67,7 @@ class ExtractOnly:
     def __init__(self, llm: StructuredLLM | None = None):
         self._llm = llm or OpenAIClient(model=settings.extraction_model or settings.agent_model)
 
-    async def run(self, case: ExtractionCase, now: datetime) -> Outcome:
+    async def run(self, case: MemoryWriteCase, now: datetime) -> Outcome:
         found = await extract(
             self._llm,
             owner=case.owner,
@@ -101,6 +101,7 @@ class CaseRun:
     input_tokens: int
     output_tokens: int
     proposed: tuple[str, ...] = ()  # what the writer changed, to read a failure without a rerun
+    needs_reconciliation: bool = False  # the case has existing memories (see the cases module)
 
 
 def _describe(change: Change) -> str:
@@ -111,7 +112,7 @@ def _describe(change: Change) -> str:
     return f"{target}[{change.kind}] {change.content}{until}"
 
 
-async def run_case(writer: Writer, case: ExtractionCase, run: int) -> CaseRun:
+async def run_case(writer: Writer, case: MemoryWriteCase, run: int) -> CaseRun:
     try:
         outcome = await writer.run(case, EVAL_NOW)
     except Exception as error:  # noqa: BLE001 - a writer that fails fails its case, not the run
@@ -127,6 +128,7 @@ async def run_case(writer: Writer, case: ExtractionCase, run: int) -> CaseRun:
             error=f"{type(error).__name__}: {error}",
             input_tokens=0,
             output_tokens=0,
+            needs_reconciliation=case.needs_reconciliation,
         )
     verdict = check_case(case, outcome.changes)
     return CaseRun(
@@ -142,6 +144,7 @@ async def run_case(writer: Writer, case: ExtractionCase, run: int) -> CaseRun:
         input_tokens=outcome.input_tokens,
         output_tokens=outcome.output_tokens,
         proposed=tuple(_describe(change) for change in outcome.changes),
+        needs_reconciliation=case.needs_reconciliation,
     )
 
 
@@ -152,6 +155,13 @@ def summarize(runs: list[CaseRun]) -> dict:
         row["runs"] += 1
         row["passed"] += item.passed
     count = len(runs)
+    by_stage = {
+        name: {
+            "runs": sum(item.needs_reconciliation is needs for item in runs),
+            "passed": sum(item.passed for item in runs if item.needs_reconciliation is needs),
+        }
+        for name, needs in (("alone", False), ("needs_reconciliation", True))
+    }
     return {
         "runs": count,
         "passed": sum(item.passed for item in runs),
@@ -162,6 +172,7 @@ def summarize(runs: list[CaseRun]) -> dict:
         "input_tokens": sum(item.input_tokens for item in runs),
         "output_tokens": sum(item.output_tokens for item in runs),
         "by_category": by_category,
+        "by_stage": by_stage,
     }
 
 
@@ -170,6 +181,9 @@ def print_report(summary: dict) -> None:
     for category, row in sorted(summary["by_category"].items()):
         print(f"{category:18}{row['passed']:>5}/{row['runs']:<4}")
     print(f"{'all':18}{summary['passed']:>5}/{summary['runs']:<4}")
+    alone, later = summary["by_stage"]["alone"], summary["by_stage"]["needs_reconciliation"]
+    print(f"  no existing memories (the extractor alone)  {alone['passed']}/{alone['runs']}")
+    print(f"  existing memories (need reconciliation)     {later['passed']}/{later['runs']}")
     print(
         f"changes per turn {summary['changes_per_turn']}, errors {summary['errors']}, "
         f"tokens in/out {summary['input_tokens']}/{summary['output_tokens']}"
@@ -207,7 +221,7 @@ async def main(
 
     gate = asyncio.Semaphore(concurrency)
 
-    async def one(case: ExtractionCase, run: int) -> CaseRun:
+    async def one(case: MemoryWriteCase, run: int) -> CaseRun:
         async with gate:
             return await run_case(writer, case, run)
 
@@ -222,7 +236,7 @@ async def main(
 
     results_dir.mkdir(exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    path = results_dir / f"extraction-{split}-{writer_name}-{stamp}.json"
+    path = results_dir / f"memory-write-{split}-{writer_name}-{stamp}.json"
     path.write_text(
         json.dumps(
             {
@@ -256,7 +270,7 @@ async def main(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Extraction eval")
+    parser = argparse.ArgumentParser(description="Memory write eval")
     parser.add_argument("--split", choices=SPLITS, default="dev")
     parser.add_argument("--writer", choices=list(WRITERS), default="none")
     parser.add_argument("--repeat", type=int, default=1)

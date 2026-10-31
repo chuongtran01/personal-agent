@@ -1,9 +1,9 @@
-"""Extraction eval cases: the schema and the loader.
+"""Memory write eval cases: the schema and the loader.
 
-Each row of ``datasets/extraction.dev.jsonl`` and ``.test.jsonl`` is one owner turn given to the
+Each row of ``datasets/memory_write.dev.jsonl`` and ``.test.jsonl`` is one owner turn given to the
 memory-writing step, together with the memories that already exist. There is no agent, no
 database and no search: the step under test gets the case and answers with the changes it would
-make, and ``extraction_checks`` judges those changes in code.
+make, and ``memory_write_checks`` judges those changes in code.
 
 A case holds:
 
@@ -21,6 +21,9 @@ and what must hold afterwards:
 - ``deletes``: existing keys that must end up deleted.
 - ``no_changes``: nothing at all may change.
 - ``must_not_store``: words that may not appear in any stored text.
+
+A case with ``existing`` memories needs reconciliation to pass (``needs_reconciliation``), and the
+report counts those apart from the cases the extractor can pass alone.
 
 Every change not asked for is a failure, and one that touches a memory the owner did not mean
 (a wrong delete or a wrong replacement) or stores a forbidden word is a zero-tolerance one.
@@ -94,7 +97,7 @@ class Write(BaseModel):
     ends: date | None  # the last day of an event; an end stored as the start of the next day counts
 
 
-class ExtractionCase(BaseModel):
+class MemoryWriteCase(BaseModel):
     """Every field is required, with an empty value where it does not apply, so all rows look alike."""
 
     model_config = ConfigDict(extra="forbid")
@@ -111,8 +114,16 @@ class ExtractionCase(BaseModel):
     must_not_store: list[str]
     note: str | None
 
+    @property
+    def needs_reconciliation(self) -> bool:
+        """A right result depends on memories that already exist, which the extractor never sees.
 
-def _problem(case: ExtractionCase) -> str | None:
+        Derived, not stored, so it cannot disagree with ``existing``. Duplicates, replacements and
+        deletes need it; so does a "forget" with nothing to match, which must leave the others alone."""
+        return bool(self.existing)
+
+
+def _problem(case: MemoryWriteCase) -> str | None:
     """What is wrong with one row, or None."""
     by_key = {memory.key: memory for memory in case.existing}
     if len(by_key) != len(case.existing):
@@ -171,17 +182,17 @@ def _problem(case: ExtractionCase) -> str | None:
     return None
 
 
-def load_cases(split: str, directory: Path = DATASETS) -> list[ExtractionCase]:
+def load_cases(split: str, directory: Path = DATASETS) -> list[MemoryWriteCase]:
     """The cases of a split. An empty file is a valid, empty split."""
     if split not in SPLITS:
         raise InvalidDataset(f"unknown split {split!r}; expected one of {SPLITS}")
-    path = directory / f"extraction.{split}.jsonl"
-    cases: list[ExtractionCase] = []
+    path = directory / f"memory_write.{split}.jsonl"
+    cases: list[MemoryWriteCase] = []
     try:
         for number, line in enumerate(path.read_text().splitlines(), start=1):
             if line.strip():
                 try:
-                    cases.append(ExtractionCase.model_validate(json.loads(line)))
+                    cases.append(MemoryWriteCase.model_validate(json.loads(line)))
                 except (json.JSONDecodeError, ValidationError) as error:
                     raise InvalidDataset(f"{path.name} line {number}: {error}") from error
     except OSError as error:
@@ -196,7 +207,7 @@ def load_cases(split: str, directory: Path = DATASETS) -> list[ExtractionCase]:
     return cases
 
 
-def load_all(directory: Path = DATASETS) -> dict[str, list[ExtractionCase]]:
+def load_all(directory: Path = DATASETS) -> dict[str, list[MemoryWriteCase]]:
     """Both splits, checked against each other: ids and inputs must not repeat."""
     splits = {split: load_cases(split, directory) for split in SPLITS}
     every = [case for cases in splits.values() for case in cases]

@@ -2,11 +2,11 @@ import asyncio
 import json
 from datetime import datetime
 
-import extraction_eval
-from extraction_cases import EVAL_TZ, load_cases
-from extraction_checks import Add, Delete
-from extraction_eval import NoWrites, Outcome, run_case, summarize
+import memory_write_eval
 from memory_cases import EVAL_NOW
+from memory_write_cases import EVAL_TZ, load_cases
+from memory_write_checks import Add, Delete
+from memory_write_eval import NoWrites, Outcome, run_case, summarize
 
 
 def case(id):
@@ -72,7 +72,7 @@ async def test_a_wrong_delete_and_a_stored_word_are_counted_separately():
 
 
 def test_the_summary_counts_by_category():
-    from extraction_eval import CaseRun
+    from memory_write_eval import CaseRun
 
     def row(category, passed, changes=0, error=None):
         return CaseRun("x", category, 1, passed, (), (), (), changes, error, 5, 1)
@@ -93,9 +93,9 @@ def test_an_empty_summary_does_not_divide_by_zero():
 
 
 async def test_main_writes_a_results_file_and_passes_the_gate_for_the_baseline(tmp_path, capsys):
-    code = await extraction_eval.main("test", "none", 2, [], tmp_path)
+    code = await memory_write_eval.main("test", "none", 2, [], tmp_path)
 
-    files = list(tmp_path.glob("extraction-test-none-*.json"))
+    files = list(tmp_path.glob("memory-write-test-none-*.json"))
     saved = json.loads(files[0].read_text())
     assert code == 0 and len(files) == 1
     assert saved["repeat"] == 2 and len(saved["runs"]) == 2 * len(load_cases("test"))
@@ -106,12 +106,12 @@ async def test_main_writes_a_results_file_and_passes_the_gate_for_the_baseline(t
 
 async def test_main_exits_one_when_a_run_stored_something_forbidden(tmp_path, monkeypatch, capsys):
     monkeypatch.setitem(
-        extraction_eval.WRITERS,
+        memory_write_eval.WRITERS,
         "bad",
         lambda: Scripted({"e031": [Add("fact", "card 4111 1111 1111 1111")]}),
     )
 
-    code = await extraction_eval.main("dev", "bad", 1, ["e031"], tmp_path)
+    code = await memory_write_eval.main("dev", "bad", 1, ["e031"], tmp_path)
 
     assert code == 1
     assert "GATE FAILED" in capsys.readouterr().out
@@ -121,12 +121,12 @@ async def test_main_runs_only_the_cases_asked_for_and_refuses_unknown_ones(tmp_p
     import pytest
     from memory_cases import InvalidDataset
 
-    await extraction_eval.main("dev", "none", 1, ["e010", "e011"], tmp_path)
+    await memory_write_eval.main("dev", "none", 1, ["e010", "e011"], tmp_path)
     saved = json.loads(next(tmp_path.glob("*.json")).read_text())
 
     assert [r["id"] for r in saved["runs"]] == ["e010", "e011"]
     with pytest.raises(InvalidDataset, match="e999"):
-        await extraction_eval.main("dev", "none", 1, ["e999"], tmp_path)
+        await memory_write_eval.main("dev", "none", 1, ["e999"], tmp_path)
 
 
 # The extractor as a writer ---------------------------------------------------------------------
@@ -135,7 +135,7 @@ async def test_main_runs_only_the_cases_asked_for_and_refuses_unknown_ones(tmp_p
 async def test_the_extract_writer_stores_every_proposed_add_and_nothing_else():
     from datetime import UTC
 
-    from extraction_eval import ExtractOnly
+    from memory_write_eval import ExtractOnly
     from scripted_llm import ScriptedStructured, answer
 
     proposals = {
@@ -155,7 +155,7 @@ async def test_the_extract_writer_stores_every_proposed_add_and_nothing_else():
 
 
 async def test_the_extract_writer_gives_the_extractor_the_whole_case():
-    from extraction_eval import ExtractOnly
+    from memory_write_eval import ExtractOnly
     from scripted_llm import ScriptedStructured, answer
 
     llm = ScriptedStructured(answer({"proposals": []}))
@@ -170,7 +170,7 @@ async def test_the_extract_writer_gives_the_extractor_the_whole_case():
 
 
 async def test_the_extract_writer_passes_the_assistants_reply_as_context():
-    from extraction_eval import ExtractOnly
+    from memory_write_eval import ExtractOnly
     from scripted_llm import ScriptedStructured, answer
 
     llm = ScriptedStructured(answer({"proposals": []}))
@@ -183,7 +183,7 @@ async def test_the_extract_writer_passes_the_assistants_reply_as_context():
 
 
 async def test_a_failed_extraction_fails_only_its_case():
-    from extraction_eval import ExtractOnly
+    from memory_write_eval import ExtractOnly
     from scripted_llm import ScriptedStructured
 
     from app.agent.llm import LLMError
@@ -207,17 +207,17 @@ async def test_main_runs_cases_at_the_same_time_up_to_the_limit(tmp_path):
             running -= 1
             return Outcome()
 
-    extraction_eval.WRITERS["slow"] = Slow
+    memory_write_eval.WRITERS["slow"] = Slow
     try:
-        await extraction_eval.main("dev", "slow", 1, [], tmp_path, concurrency=3)
+        await memory_write_eval.main("dev", "slow", 1, [], tmp_path, concurrency=3)
     finally:
-        del extraction_eval.WRITERS["slow"]
+        del memory_write_eval.WRITERS["slow"]
 
     assert peak == 3
 
 
 async def test_a_run_records_what_the_writer_proposed_and_the_report_prints_it(tmp_path, capsys):
-    from extraction_checks import Supersede
+    from memory_write_checks import Supersede
 
     class Writes:
         async def run(self, case, now):
@@ -236,5 +236,36 @@ async def test_a_run_records_what_the_writer_proposed_and_the_report_prints_it(t
         "replace city: [fact] Porto.",
         "delete surgery",
     )
-    extraction_eval.print_failures([result])
+    memory_write_eval.print_failures([result])
     assert "wrote: replace city: [fact] Porto." in capsys.readouterr().out
+
+
+async def test_a_run_carries_whether_its_case_needs_reconciliation():
+    with_existing = await run_case(NoWrites(), case("e019"), 1)
+    without = await run_case(NoWrites(), case("e010"), 1)
+    failed = await run_case(Scripted(fail=RuntimeError("x")), case("e019"), 1)
+
+    assert (with_existing.needs_reconciliation, without.needs_reconciliation) == (True, False)
+    assert failed.needs_reconciliation is True
+
+
+def test_the_summary_and_report_count_the_two_stages_apart(capsys):
+    from memory_write_eval import CaseRun, print_report
+
+    def row(needs, passed):
+        return CaseRun("x", "add", 1, passed, (), (), (), 0, None, 0, 0, (), needs)
+
+    summary = summarize([row(False, True), row(False, True), row(False, False), row(True, False)])
+
+    assert summary["by_stage"] == {
+        "alone": {"runs": 3, "passed": 2},
+        "needs_reconciliation": {"runs": 1, "passed": 0},
+    }
+    print_report(summary)
+    out = capsys.readouterr().out
+    assert "no existing memories (the extractor alone)  2/3" in out
+    assert "existing memories (need reconciliation)     0/1" in out
+
+
+def test_an_empty_stage_is_zero_of_zero():
+    assert summarize([])["by_stage"]["alone"] == {"runs": 0, "passed": 0}

@@ -2,8 +2,8 @@ import json
 from collections import Counter
 
 import pytest
-from extraction_cases import DATASETS, SPLITS, ExtractionCase, load_all, load_cases
 from memory_cases import InvalidDataset
+from memory_write_cases import DATASETS, SPLITS, MemoryWriteCase, load_all, load_cases
 
 ROW = {
     "id": "e900",
@@ -23,7 +23,7 @@ ROW = {
 
 
 def load(tmp_path, *rows):
-    (tmp_path / "extraction.dev.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (tmp_path / "memory_write.dev.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     return load_cases("dev", directory=tmp_path)
 
 
@@ -43,10 +43,12 @@ def test_every_category_is_in_both_splits():
     splits = load_all()
     dev, test = (Counter(c.category for c in splits[s]) for s in ("dev", "test"))
 
-    assert set(dev) == set(test) == set(ExtractionCase.model_fields["category"].annotation.__args__)
+    assert (
+        set(dev) == set(test) == set(MemoryWriteCase.model_fields["category"].annotation.__args__)
+    )
 
 
-def test_every_trap_has_an_extraction_case():
+def test_every_trap_has_a_memory_write_case():
     notes = " ".join((c.note or "").lower() for cases in load_all().values() for c in cases)
 
     for trap in (
@@ -66,7 +68,7 @@ def test_a_valid_row_loads(tmp_path):
 
 
 def test_an_empty_file_is_an_empty_split(tmp_path):
-    (tmp_path / "extraction.dev.jsonl").write_text("")
+    (tmp_path / "memory_write.dev.jsonl").write_text("")
 
     assert load_cases("dev", directory=tmp_path) == []
 
@@ -79,7 +81,7 @@ def test_an_unknown_split_or_missing_file_is_refused(tmp_path):
 
 
 def test_a_malformed_row_names_its_line(tmp_path):
-    (tmp_path / "extraction.dev.jsonl").write_text(json.dumps(ROW) + "\n{not json\n")
+    (tmp_path / "memory_write.dev.jsonl").write_text(json.dumps(ROW) + "\n{not json\n")
 
     with pytest.raises(InvalidDataset, match="line 2"):
         load_cases("dev", directory=tmp_path)
@@ -161,7 +163,7 @@ def test_each_category_has_its_own_shape(tmp_path):
 
 def test_the_same_input_in_both_splits_is_refused(tmp_path):
     for split in SPLITS:
-        (tmp_path / f"extraction.{split}.jsonl").write_text(
+        (tmp_path / f"memory_write.{split}.jsonl").write_text(
             json.dumps({**ROW, "id": f"e9{split}"}) + "\n"
         )
 
@@ -176,11 +178,34 @@ def test_the_same_id_in_both_splits_is_refused(tmp_path):
             "owner": [owner],
             "writes": [{**ROW["writes"][0], "include": [[owner[-6:-1]]]}],
         }
-        (tmp_path / f"extraction.{split}.jsonl").write_text(json.dumps(row) + "\n")
+        (tmp_path / f"memory_write.{split}.jsonl").write_text(json.dumps(row) + "\n")
 
     with pytest.raises(InvalidDataset, match="id appears more than once"):
         load_all(tmp_path)
 
 
 def test_the_dataset_directory_is_the_one_in_the_repo():
-    assert (DATASETS / "extraction.dev.jsonl").exists()
+    assert (DATASETS / "memory_write.dev.jsonl").exists()
+
+
+def test_a_case_needs_reconciliation_exactly_when_it_has_existing_memories(tmp_path):
+    (case,) = load(tmp_path, ROW)
+    (bare,) = load(
+        tmp_path,
+        {
+            **ROW,
+            "existing": [],
+            "writes": [{**ROW["writes"][0], "replaces": None}],
+            "category": "add",
+        },
+    )
+
+    assert case.needs_reconciliation is True
+    assert bare.needs_reconciliation is False
+
+
+def test_the_committed_cases_that_replace_or_delete_all_need_reconciliation():
+    for cases in load_all().values():
+        for case in cases:
+            if case.deletes or any(write.replaces for write in case.writes):
+                assert case.needs_reconciliation, case.id

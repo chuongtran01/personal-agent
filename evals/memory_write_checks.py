@@ -1,4 +1,4 @@
-"""The code-only checks of the extraction eval: no model, no database, so they are tested on their own.
+"""The code-only checks of the memory write eval: no model, no database, so they are tested on their own.
 
 The step under test answers a case with a list of changes (``Add``, ``Supersede``, ``Delete``) that
 name an existing memory by its case key. ``check_case`` says what is wrong with them. Nothing here
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from agent_checks import normalize
-from extraction_cases import EVAL_NOW, EVAL_TZ, ExtractionCase, Write
+from memory_write_cases import EVAL_NOW, EVAL_TZ, MemoryWriteCase, Write
 
 
 @dataclass(frozen=True)
@@ -87,7 +87,7 @@ def _describe(want: Write) -> str:
     return f"{'replace ' + want.replaces + ': ' if want.replaces else ''}{words}"
 
 
-def check_case(case: ExtractionCase, changes: list[Change]) -> Verdict:
+def check_case(case: MemoryWriteCase, changes: list[Change]) -> Verdict:
     """What failed for one run of the step under test."""
     failures: list[str] = []
     wrong: list[str] = []

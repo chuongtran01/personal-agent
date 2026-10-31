@@ -150,7 +150,7 @@ Evals are written before the agent and act as its specification. A harness runs 
 
 **Ablation for the README:** no memory, the last N messages as history, and retrieved memory, compared on the metrics above. The point to show is that retrieved memory beats stuffing the history in, in answers and in cost.
 
-The model answers differently each time, so each dev run is repeated three times and the test split is held out and read, not tuned on. Memory evals add one more source of variation (the extraction step), so extraction is also tested alone on fixed turns.
+The model answers differently each time, so each dev run is repeated three times and the test split is held out and read, not tuned on. Memory evals add one more source of variation (the extraction step), so the write path is also tested alone on fixed turns.
 
 ## Development roadmap
 
@@ -184,6 +184,6 @@ Eleven phases, each ending in a gate that must pass before the next starts. Docs
 | The model confirming its own action | Risk | Confirmation is checked in code from the owner's own message |
 | Sensitive data stored in memory | Risk | A trap in the eval set, and a filter before write; the memory viewer lets the owner delete anything |
 | Double send after a lost answer | Risk | Idempotency key and `unknown` handling, plus a test that forces a lost answer after the write |
-| Eval flakiness, now with extraction as a second model step | Risk | Pin judge model and settings; repeat dev three times; test extraction alone on fixed turns |
+| Eval flakiness, now with extraction as a second model step | Risk | Pin judge model and settings; repeat dev three times; test the write path alone on fixed turns |
 | Real personal data in tests and traces | Risk | Evals use seeded fake accounts only; Langfuse off or scrubbed for real use |
 | Scope creep into more providers and more tools | Risk | The project ends at the memory numbers and one calendar and one email provider |
