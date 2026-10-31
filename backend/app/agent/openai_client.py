@@ -2,10 +2,21 @@
 
 import json
 from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from typing import Any, cast
 
 import openai
 from openai import AsyncOpenAI
+from openai.types.responses import (
+    FunctionToolParam,
+    ResponseCompletedEvent,
+    ResponseErrorEvent,
+    ResponseFailedEvent,
+    ResponseFunctionToolCall,
+    ResponseIncompleteEvent,
+    ResponseInputParam,
+    ResponseOutputItemDoneEvent,
+    ResponseTextDeltaEvent,
+)
 
 from app.agent.llm import (
     Done,
@@ -23,9 +34,9 @@ from app.config import settings
 REQUEST_TIMEOUT_SECONDS = 60.0
 
 
-def to_input(messages: Sequence[HistoryMessage]) -> list[dict[str, Any]]:
+def to_input(messages: Sequence[HistoryMessage]) -> ResponseInputParam:
     """The conversation as Responses API input items."""
-    items: list[dict[str, Any]] = []
+    items: ResponseInputParam = []
     for message in messages:
         if isinstance(message, UserMessage):
             items.append({"role": "user", "content": message.text})
@@ -52,14 +63,19 @@ def to_input(messages: Sequence[HistoryMessage]) -> list[dict[str, Any]]:
     return items
 
 
-def to_tools(tools: Sequence[ToolSpec]) -> list[dict[str, Any]]:
+def to_tools(tools: Sequence[ToolSpec]) -> list[FunctionToolParam]:
+    # The SDK types ``strict`` as required, but it is left out on purpose: how the API treats a
+    # missing ``strict`` against ``null`` or ``false`` is for phase 6 to settle with a real tool
     return [
-        {
-            "type": "function",
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": tool.parameters,
-        }
+        cast(
+            FunctionToolParam,
+            {
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            },
+        )
         for tool in tools
     ]
 
@@ -105,17 +121,19 @@ class OpenAIClient:
         try:
             events = await self._client.responses.create(**request)
             async for event in events:
-                if event.type == "response.output_text.delta":
+                if isinstance(event, ResponseTextDeltaEvent):
                     yield TextDelta(event.delta)
-                elif (
-                    event.type == "response.output_item.done" and event.item.type == "function_call"
+                elif isinstance(event, ResponseOutputItemDoneEvent) and isinstance(
+                    event.item, ResponseFunctionToolCall
                 ):
                     yield ToolCallRequest(_tool_call(event.item))
-                elif event.type == "response.completed":
+                elif isinstance(event, ResponseCompletedEvent):
                     usage = event.response.usage
                     finished = True
                     yield Done(Usage(usage.input_tokens, usage.output_tokens) if usage else Usage())
-                elif event.type in ("response.failed", "response.incomplete", "error"):
+                elif isinstance(
+                    event, ResponseFailedEvent | ResponseIncompleteEvent | ResponseErrorEvent
+                ):
                     raise LLMError(f"the model stopped early ({event.type})", retryable=False)
         except LLMError:
             raise
@@ -125,7 +143,7 @@ class OpenAIClient:
             raise LLMError("the model stream ended without a result", retryable=True)
 
 
-def _tool_call(item: Any) -> ToolCall:
+def _tool_call(item: ResponseFunctionToolCall) -> ToolCall:
     try:
         arguments = json.loads(item.arguments or "{}")
     except json.JSONDecodeError as error:

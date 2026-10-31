@@ -4,6 +4,15 @@ from types import SimpleNamespace as NS
 import httpx
 import openai
 import pytest
+from openai.types.responses import (
+    ResponseCompletedEvent,
+    ResponseErrorEvent,
+    ResponseFailedEvent,
+    ResponseFunctionToolCall,
+    ResponseIncompleteEvent,
+    ResponseOutputItemDoneEvent,
+    ResponseTextDeltaEvent,
+)
 
 from app.agent.llm import Done, LLMError, TextDelta, ToolCallRequest, ToolSpec, Usage
 from app.agent.messages import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
@@ -12,18 +21,23 @@ from app.agent.openai_client import OpenAIClient, to_error, to_input, to_tools
 REQUEST = httpx.Request("POST", "https://api.example.test/v1/responses")
 
 
+# Real SDK event objects, built without validation so a test names only the fields the client reads
 def delta(text):
-    return NS(type="response.output_text.delta", delta=text)
+    return ResponseTextDeltaEvent.model_construct(type="response.output_text.delta", delta=text)
 
 
 def completed(input_tokens=11, output_tokens=7):
     usage = NS(input_tokens=input_tokens, output_tokens=output_tokens)
-    return NS(type="response.completed", response=NS(usage=usage))
+    return ResponseCompletedEvent.model_construct(
+        type="response.completed", response=NS(usage=usage)
+    )
 
 
 def function_call(call_id="call_1", name="lookup", arguments='{"query": "dentist"}'):
-    item = NS(type="function_call", call_id=call_id, name=name, arguments=arguments)
-    return NS(type="response.output_item.done", item=item)
+    item = ResponseFunctionToolCall.model_construct(
+        type="function_call", call_id=call_id, name=name, arguments=arguments
+    )
+    return ResponseOutputItemDoneEvent.model_construct(type="response.output_item.done", item=item)
 
 
 class FakeResponses:
@@ -114,15 +128,33 @@ async def test_tool_arguments_that_are_not_an_object_fail_the_call(arguments):
     assert raised.value.retryable is False
 
 
+async def test_a_finished_item_that_is_not_a_function_call_is_ignored():
+    message = ResponseOutputItemDoneEvent.model_construct(
+        type="response.output_item.done", item=NS(type="message")
+    )
+    client, _ = client_with(delta("hi"), message, completed())
+
+    assert await collect(client) == [TextDelta("hi"), Done(Usage(11, 7))]
+
+
 async def test_a_missing_usage_is_zero_tokens():
-    client, _ = client_with(NS(type="response.completed", response=NS(usage=None)))
+    client, _ = client_with(
+        ResponseCompletedEvent.model_construct(type="response.completed", response=NS(usage=None))
+    )
 
     assert await collect(client) == [Done(Usage())]
 
 
-@pytest.mark.parametrize("kind", ["response.failed", "response.incomplete", "error"])
-async def test_a_failed_stream_raises_without_retry(kind):
-    client, _ = client_with(delta("par"), NS(type=kind))
+@pytest.mark.parametrize(
+    ("kind", "event"),
+    [
+        ("response.failed", ResponseFailedEvent),
+        ("response.incomplete", ResponseIncompleteEvent),
+        ("error", ResponseErrorEvent),
+    ],
+)
+async def test_a_failed_stream_raises_without_retry(kind, event):
+    client, _ = client_with(delta("par"), event.model_construct(type=kind))
 
     with pytest.raises(LLMError) as raised:
         await collect(client)
