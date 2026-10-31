@@ -80,4 +80,4 @@ docs/       DESIGN.md and one document per phase, written before the code
 
 ## Docs
 
-[`DESIGN.md`](docs/DESIGN.md) is the overview, the architecture and the roadmap. Each phase has its own plan, decisions and gate check: [1](docs/PHASE1.md), [2](docs/PHASE2.md), [3](docs/PHASE3.md), [4](docs/PHASE4.md).
+[`DESIGN.md`](docs/DESIGN.md) is the overview, the architecture and the roadmap. Each phase has its own plan, decisions and gate check: [1](docs/PHASE1.md), [2](docs/PHASE2.md), [3](docs/PHASE3.md), [4](docs/PHASE4.md), [5](docs/PHASE5.md) (planned).
