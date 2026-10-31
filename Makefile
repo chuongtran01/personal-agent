@@ -1,4 +1,4 @@
-.PHONY: up down db-reset migrate seed install hooks test lint eval-memory eval-memory-retrieval eval-agent api web-install web web-lint web-test web-build
+.PHONY: up down db-reset migrate seed install hooks test lint eval-memory eval-memory-retrieval eval-agent eval-extraction api web-install web web-lint web-test web-build
 
 up:
 	docker compose up -d db
@@ -43,6 +43,10 @@ eval-memory-retrieval:
 # Agent eval: real loop, real model, needs OPENAI_API_KEY. ARGS="--split test" or "--memory both --repeat 3"
 eval-agent:
 	cd backend && .venv/bin/python ../evals/agent_eval.py $(ARGS)
+
+# Extraction eval: the memory-writing step on fixed turns. ARGS="--split test" or "--repeat 3"
+eval-extraction:
+	cd backend && .venv/bin/python ../evals/extraction_eval.py $(ARGS)
 
 # The web app (frontend/, Node 22 or later). `make web` needs the API running on :8000 for /api
 web-install:

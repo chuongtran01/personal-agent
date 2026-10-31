@@ -1,6 +1,6 @@
 # Phase 5: Memory writes
 
-**Status:** planned
+**Status:** in progress
 **Gate:** a fact the owner states in one session is used in the next; a changed fact replaces the old one, a forgotten one is never used again, and nothing that should not be stored is stored
 
 ## Goal
@@ -13,7 +13,7 @@ Two pieces of earlier phases are completed here. Phase 3 seeds the memory once p
 
 ## Deliverables
 
-- [ ] **Extraction eval and cases first**: `evals/extraction_cases.py`, `evals/extraction_eval.py`, `evals/datasets/extraction.{dev,test}.jsonl`. Fixed turns, each with the memory changes it must and must not produce, checked by code. Written, and run against a stub that stores nothing (the baseline), before the extractor exists
+- [x] **Extraction eval and cases first**: `evals/extraction_cases.py`, `evals/extraction_eval.py`, `evals/datasets/extraction.{dev,test}.jsonl`. Fixed turns, each with the memory changes it must and must not produce, checked by code. Written, and run against a stub that stores nothing (the baseline), before the extractor exists
 - [ ] **Extractor**: `backend/app/memory/extract.py`. One model call after a turn: the owner's messages in, proposed changes out (`add`, `delete`) as structured output, validated before anything uses them
 - [ ] **Reconciliation**: `backend/app/memory/reconcile.py`. Each proposal is compared with the closest active memories; the result is `noop`, `add`, `supersede(id)` or `delete(id)`, and the rules that keep it safe are code, not prompt
 - [ ] **Write functions with events**: `backend/app/memory/write.py`. `add`, `supersede`, `delete`, `restore`, each in one transaction with its `memory_events` row and the reason, so any change can be explained and undone
@@ -82,6 +82,24 @@ Dropped in code, after extraction and before reconciliation: card numbers (a dig
 `memory_events` already allows `created`, `superseded`, `deleted` and `restored`. Each write adds a row with the memory id, the event, a reason in words ("owner said they moved", "owner asked to forget", "edited in the web app"). A proposal that ends as a no-op writes nothing and so has no event, and the message id it came from. `source_message_id` on the memory is the owner's message and `source_kind` is `owner`. This phase never writes `external`.
 
 An edit in the web app is a supersede (a new row with the new text, the old one kept as history, reason "edited by the owner"), so an edit can be undone by reading the history, and recalled memories shown under old replies resolve to "since replaced". A restore sets a deleted memory back to `active`. A superseded memory cannot be restored; the owner edits the current one instead.
+
+## Extraction eval, as built
+
+`make eval-extraction` (`ARGS="--split test"`, `"--repeat 3"`, `"--case e021"`). The pieces:
+
+- `evals/extraction_cases.py`: the row schema and loader. Every field is required, rows are checked for consistency on load (a change names an active memory, a case checks something, no word is both required and forbidden), and the two splits may not share an input.
+- `evals/extraction_checks.py`: the checks, with no model and no database. The step under test answers with `Add`, `Supersede(target)` and `Delete(target)`, naming existing memories by a case key; `check_case` returns the failures, plus two zero-tolerance lists apart from the score: `stored` (a forbidden word, or a card-like number found by the check itself, in a new memory) and `wrong_changes` (a delete or replacement the owner did not mean, or of a memory that is not active or was not shown).
+- `evals/extraction_eval.py`: the runner. A writer takes a case and the fixed clock and returns an `Outcome` (changes and tokens). `--writer none` is the baseline that stores nothing. A writer that raises fails only its case. The gate is zero `stored` and zero `wrong_changes`, exit status 1 otherwise. Results go to `evals/results/`.
+- `evals/datasets/extraction.dev.jsonl` (37 cases) and `.test.jsonl` (16): eleven categories, all in both splits. Each trap in `data/memory_traps.yaml` has a case. The clock is Wednesday 28 October 2026 in Lisbon, so "this Friday" is 30 October and "3 March" is 3 March 2027.
+
+Decisions made while building it:
+
+- A write is judged on words, kind and dates, never on exact wording, so a model that writes "The owner is allergic to penicillin" and one that writes "Penicillin allergy" both pass.
+- Any write that was not asked for fails the case. That is what makes five wordings of one fact (`e021`) mean one memory, and it is stricter than a recall score: a model that stores a harmless extra fact fails that case.
+- An event's end counts if it is the last day or the start of the next day.
+- "Forget that" with nothing to match, a request, a tentative remark ("maybe I should learn Spanish") and anything the assistant said are all `no_changes` cases.
+
+**Baseline (writer `none`, nothing stored):** dev 15 of 37, test 8 of 16. These are not passes in any useful sense: the stub does nothing, and a case whose right answer is "change nothing" is passed by doing nothing. They are exactly the no-change cases (no_write, assistant_claim, delete_unclear, and the duplicate and sensitive cases that expect no change). Every case that asks for a write or a delete fails, and "zero stored, zero wrong changes" is trivially true for a writer that writes nothing. The numbers are the floor the extractor must beat on the write cases, and a reminder that the no-change cases alone cannot tell a good extractor from a silent one.
 
 ## Memory API
 
