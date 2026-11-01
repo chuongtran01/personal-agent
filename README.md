@@ -4,7 +4,7 @@ A personal assistant for one person that **remembers**. It keeps facts, preferen
 
 No agent framework: the loop, the memory and the rules are written by hand, so every step is visible and testable. Rules live in code, not in the prompt. Evals are written before the code they measure.
 
-> **Work in progress.** It is built in phases, each ending in a gate that has to pass before the next starts. Phases 1 to 4 are done; phase 5 (memory writes) is next. The plan is in [`docs/DESIGN.md`](docs/DESIGN.md).
+> **Work in progress.** It is built in phases, each ending in a gate that has to pass before the next starts. Phases 1 to 4 are done; phase 5 (memory writes) is in progress. The plan is in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Status
 
@@ -14,7 +14,7 @@ No agent framework: the loop, the memory and the rules are written by hand, so e
 | 2 | Memory store and retrieval: keyword, vector and hybrid search with recency | done |
 | 3 | Agent loop and API: recall before each reply, owner login, streaming API, agent evals | done |
 | 4 | Web app: login, chats, streaming chat view, recalled memories, memory list | done |
-| 5 | Memory writes: extraction, update, forget | planned |
+| 5 | Memory writes: extraction, update, forget | in progress |
 | 6 to 7 | Calendar and email over MCP, writes with confirmation | planned |
 | 8 | Chat compaction | planned |
 | 9 | Full evals, tracing, polish | planned |
@@ -26,6 +26,21 @@ No agent framework: the loop, the memory and the rules are written by hand, so e
 - **An agent that uses it.** Before each reply the loop recalls relevant memories (and replaced ones, when asked about the past), puts them in the prompt as labelled data, and streams the answer. It says "I don't know" for what it was never told.
 - **A streaming API** behind a single-owner login (argon2 password hash, signed token): chats, messages as server-sent events, and a read-only memory list.
 - **A web app** built on Next.js, Tailwind and shadcn/ui: login, a chat list and a streaming chat view that shows which memories each reply recalled, and a read-only memory list by status.
+- **An agent that learns** (phase 5, still being finished). After each reply a background step decides what the owner said that is worth keeping and writes it: a stated fact is remembered in the next chat, a changed one replaces the old one, a request to forget stops it being used, and anything that looks like a card number, password or key is filtered out in code before it is written. It works end to end on a real model; the owner cannot yet edit memories in the app, and its evals are not finished, so there are no numbers for it below.
+
+## How memory is written
+
+```mermaid
+flowchart LR
+    R["Reply sent<br/>to the owner"] --> Q["Queue<br/>one job at a time"]
+    Q --> X["Extract<br/>one model call: what did the owner<br/>say that is worth keeping?"]
+    X --> F["Filter<br/>in code: card numbers, passwords,<br/>keys and ids are dropped"]
+    F --> C["Reconcile<br/>compare with what is stored:<br/>add, replace, forget or nothing"]
+    C --> W["Write<br/>new rows and an event log,<br/>nothing overwritten"]
+    W --> M[("Memories")]
+```
+
+It runs after the reply has been sent, so it adds no waiting, and a failure in it never changes a reply. The extractor takes memories only from what the owner wrote: the assistant's answer is shown to it as context and never as a source, and nothing a tool returned reaches it. It does not see the stored memories, so deciding whether something is new, a repeat or a change is a separate step. A changed fact adds a new row and keeps the old one as history, and a request to forget marks rows deleted instead of removing them, so every change can be explained. Details and decisions are in [`docs/PHASE5.md`](docs/PHASE5.md).
 
 ## Results so far
 
@@ -81,4 +96,4 @@ docs/       DESIGN.md and one document per phase, written before the code
 
 ## Docs
 
-[`DESIGN.md`](docs/DESIGN.md) is the overview, the architecture and the roadmap. Each phase has its own plan, decisions and gate check: [1](docs/PHASE1.md), [2](docs/PHASE2.md), [3](docs/PHASE3.md), [4](docs/PHASE4.md), [5](docs/PHASE5.md) (planned).
+[`DESIGN.md`](docs/DESIGN.md) is the overview, the architecture and the roadmap. Each phase has its own plan, decisions and gate check: [1](docs/PHASE1.md), [2](docs/PHASE2.md), [3](docs/PHASE3.md), [4](docs/PHASE4.md), [5](docs/PHASE5.md) (in progress).
