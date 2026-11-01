@@ -17,7 +17,7 @@ Two pieces of earlier phases are completed here. Phase 3 seeds the memory once p
 - [x] **Extractor**: `backend/app/memory/extract.py`. One model call after a turn: the owner's messages in, proposed changes out (`add`, `delete`) as structured output, validated before anything uses them
 - [x] **Reconciliation**: `backend/app/memory/reconcile.py`. Each proposal is compared with the closest active memories; the result is `noop`, `add`, `supersede(id)` or `delete(id)`, and the rules that keep it safe are code, not prompt
 - [x] **Write functions with events**: `backend/app/memory/write.py`. `add`, `supersede`, `delete`, `restore`, each in one transaction with its `memory_events` row and the reason, so any change can be explained and undone
-- [ ] **Filter before write**: `backend/app/memory/filter.py`. Card numbers, passwords, PINs and long identifiers are dropped in code whatever the model proposed
+- [x] **Filter before write**: `backend/app/memory/filter.py`. Card numbers, passwords, PINs and long identifiers are dropped in code whatever the model proposed
 - [ ] **Agent integration**: the loop starts extraction after the reply is stored and `done` is sent; a failure there never touches the reply; a constructor option turns it off for the memory-off eval
 - [ ] **Memory API**: `PATCH /memories/{id}` (edit), `DELETE /memories/{id}`, `POST /memories/{id}/restore`, `GET /memories/{id}/events`
 - [ ] **Memory list controls**: edit, delete and restore in the web app, with the history of one memory (when it was written, from which message, what replaced it)
@@ -145,6 +145,29 @@ One thing it showed for reconciliation: for "Actually, I hate mornings. I run in
 - **Tests:** 31, against the test database, including recall: a deleted memory leaves the vector search and a restored one returns; a replaced one leaves it and is found as history. Nine deliberate breaks (no row lock, no active check, an end always overwritten, restore always active, a repeated delete logging again, skipped decisions not caught, one embedding call per text, restore from any status, an unknown id ignored) each failed a test.
 
 The restore rule changed from the plan: the plan restored to `active` always, which would have put a stale fact back next to the one that replaced it.
+
+## Filter, as built
+
+`backend/app/memory/filter.py`. `filter_proposals` drops every `add` that `sensitivity()` flags, and returns what was kept plus the rule that dropped each one. The pipeline calls it between the extractor and reconciliation, so a dropped secret is never embedded, shown to reconciliation or written; the rest of the turn goes on (the trip is kept, the passport number is not).
+
+| Rule | Catches | Examples |
+| --- | --- | --- |
+| `card` | a Luhn-valid run of 13 to 19 digits, in fours, in the American Express shape or unbroken | `4111 1111 1111 1111`, `3782 822463 10005` |
+| `iban` | two capitals, two digits, then the account | `GB29 NWBK 6016 1331 9268 19`, `PT50 0002 0123 1234 5678 9015 4` |
+| `long_number` | any other run of 13 or more digits | `1234 5678 9012 3456`, a 24-digit reference |
+| `secret_word` | password, passcode, passphrase, PIN, CVV, OTP, secret, API or private key, access token, security or recovery code | "the wifi password is sunflower" |
+| `key` | a token of 20 or more characters with letters and digits, or 32 or more hex digits | `sk-abc123def456ghi789jkl012` |
+| `identifier` | a word for an identifier (passport, NIF, social security, driver's licence, ID card) together with a token of six or more digits | "passport number is X1234567", `123-45-6789` |
+
+- **It leans towards dropping, on purpose.** "The owner is bad at remembering passwords" and "likes pin-up art" are dropped too, and a test pins that down. A lost harmless fact costs little; a stored card number costs a lot.
+- **A delete is never dropped.** "Forget my card number" must still reach reconciliation and remove a number that slipped in earlier.
+- **Phone numbers, dates, times, prices, flight numbers, postcodes and years pass** (a list of 19 ordinary memories is tested). A phone number is contact information, not a credential.
+- **Nothing it drops is kept anywhere.** The result and the log name the rule and the count, never the text, and a test reads the log to check.
+- **Tests:** 54 for the filter and 3 for the pipeline. Nine deliberate breaks (no Luhn, a broken Luhn, deletes filtered too, no secret-word rule, no key rule, an identifier rule without the word or with the word alone, logging the text, digit runs capped at 19) each failed a test. Writing the tests also found a hole, runs of 20 or more digits slipping past a 13-to-19 pattern, which is fixed.
+
+**What it did in the eval.** On dev, two runs of the whole pipeline (74 cases) passed 74 of 74 with the filter in place, and it dropped nothing: the extractor never proposed a secret in those cases, so here the filter is a backstop that was not tested by the model, only by the unit tests and by scripted extractors that propose a card number or a passport number.
+
+**Not covered yet.** The owner's own edit in the web app should go through the same filter; that comes with the API. The filter reads a proposal's text only, so a secret spelled out in words ("four one one one…") passes, and so does a card number the owner types into a memory by hand in a format it does not match. It is a guarantee against the shapes above, not against every way to write a secret.
 
 ## Memory API
 

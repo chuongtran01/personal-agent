@@ -454,3 +454,37 @@ async def test_the_pipeline_gives_reconciliation_the_owners_own_words():
     )
 
     assert "<owner_said>\nI moved to Porto last week.\n</owner_said>" in llm.calls[1].prompt
+
+
+async def test_the_pipeline_drops_a_secret_the_extractor_proposed_and_keeps_the_rest():
+    outcome, llm = await play(
+        "e033",
+        proposals(
+            add_proposal("The owner's passport number is X1234567."),
+            add_proposal("The owner travels to Rome next month."),
+        ),
+    )
+
+    assert [c.content for c in outcome.changes] == ["The owner travels to Rome next month."]
+    assert "filter dropped a proposal: identifier" in outcome.notes
+    assert len(llm.calls) == 1  # the secret never reached reconciliation
+
+
+async def test_a_card_number_that_gets_past_the_extractor_is_never_a_change():
+    outcome, _ = await play(
+        "e031", proposals(add_proposal("The owner's card is 4111 1111 1111 1111."))
+    )
+
+    assert outcome.changes == []
+    verdict = memory_write_eval.check_case(case("e031"), outcome.changes)
+    assert verdict.passed and verdict.stored == ()
+
+
+async def test_a_forget_request_that_names_a_secret_still_reaches_reconciliation():
+    outcome, _ = await play(
+        "e026",
+        proposals(delete_proposal("The owner's knee surgery in March 4111111111111111")),
+        forget(0),
+    )
+
+    assert outcome.changes == [Delete("surgery")]

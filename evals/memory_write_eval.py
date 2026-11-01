@@ -43,6 +43,7 @@ from app.agent.openai_client import OpenAIClient
 from app.config import settings
 from app.memory.embeddings import Embedder, OpenAIEmbedder
 from app.memory.extract import ContextMessage, extract
+from app.memory.filter import filter_proposals
 from app.memory.reconcile import Candidate, reconcile
 
 ROOT = Path(__file__).resolve().parent
@@ -143,7 +144,7 @@ class _Recording:
 
 
 class Pipeline:
-    """The write path as far as it is built: extract, then reconcile against the case's memories.
+    """The write path as far as it is built: extract, filter, then reconcile against the case's memories.
 
     Every decision becomes the change it would make: a new memory, a replacement, a delete, or
     nothing when a stored memory already says it or nothing matches a request to forget."""
@@ -163,10 +164,12 @@ class Pipeline:
             reply=case.reply,
         )
         lookup = _Recording(InlineNeighbours(case, self._embedder, self._vectors))
-        done = await reconcile(self._llm, lookup, found.proposals, owner=case.owner)
+        allowed = filter_proposals(found.proposals)
+        done = await reconcile(self._llm, lookup, allowed.kept, owner=case.owner)
 
         changes: list[Change] = []
         notes = lookup.notes
+        notes += [f"filter dropped a proposal: {rule}" for rule in allowed.dropped]
         for decision in done.decisions:
             keys = [lookup.keys[i] for i in decision.memory_ids]
             proposal = decision.proposal
