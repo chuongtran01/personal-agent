@@ -16,7 +16,7 @@ Two pieces of earlier phases are completed here. Phase 3 seeds the memory once p
 - [x] **Memory write eval and cases first**: `evals/memory_write_cases.py`, `evals/memory_write_checks.py`, `evals/memory_write_eval.py`, `evals/datasets/memory_write.{dev,test}.jsonl`. Fixed turns, each with the memory changes it must and must not produce, checked by code. Written, and run against a stub that stores nothing (the baseline), before the extractor exists
 - [x] **Extractor**: `backend/app/memory/extract.py`. One model call after a turn: the owner's messages in, proposed changes out (`add`, `delete`) as structured output, validated before anything uses them
 - [x] **Reconciliation**: `backend/app/memory/reconcile.py`. Each proposal is compared with the closest active memories; the result is `noop`, `add`, `supersede(id)` or `delete(id)`, and the rules that keep it safe are code, not prompt
-- [ ] **Write functions with events**: `backend/app/memory/write.py`. `add`, `supersede`, `delete`, `restore`, each in one transaction with its `memory_events` row and the reason, so any change can be explained and undone
+- [x] **Write functions with events**: `backend/app/memory/write.py`. `add`, `supersede`, `delete`, `restore`, each in one transaction with its `memory_events` row and the reason, so any change can be explained and undone
 - [ ] **Filter before write**: `backend/app/memory/filter.py`. Card numbers, passwords, PINs and long identifiers are dropped in code whatever the model proposed
 - [ ] **Agent integration**: the loop starts extraction after the reply is stored and `done` is sent; a failure there never touches the reply; a constructor option turns it off for the memory-off eval
 - [ ] **Memory API**: `PATCH /memories/{id}` (edit), `DELETE /memories/{id}`, `POST /memories/{id}/restore`, `GET /memories/{id}/events`
@@ -81,7 +81,7 @@ Dropped in code, after extraction and before reconciliation: card numbers (a dig
 
 `memory_events` already allows `created`, `superseded`, `deleted` and `restored`. Each write adds a row with the memory id, the event, a reason in words ("owner said they moved", "owner asked to forget", "edited in the web app"). A proposal that ends as a no-op writes nothing and so has no event, and the message id it came from. `source_message_id` on the memory is the owner's message and `source_kind` is `owner`. This phase never writes `external`.
 
-An edit in the web app is a supersede (a new row with the new text, the old one kept as history, reason "edited by the owner"), so an edit can be undone by reading the history, and recalled memories shown under old replies resolve to "since replaced". A restore sets a deleted memory back to `active`. A superseded memory cannot be restored; the owner edits the current one instead.
+An edit in the web app is a supersede (a new row with the new text, the old one kept as history, reason "edited by the owner"), so an edit can be undone by reading the history, and recalled memories shown under old replies resolve to "since replaced". A restore puts a deleted memory back to what it was: `active`, or `superseded` when something replaced it before it was deleted, because restoring the old fact beside its replacement would revive a stale one. Only a deleted memory can be restored; to change a replaced one the owner edits its current version.
 
 ## Memory write eval, as built
 
@@ -133,6 +133,19 @@ One thing it showed for reconciliation: for "Actually, I hate mornings. I run in
 
 **Results, the pipeline (`--writer pipeline`), dev, three runs, 111 cases played:** 111 passed. The 26 cases with no stored memory: 78 of 78. The 11 with stored memories: 33 of 33 (two duplicates, four supersedes, three deletes and the two "forget" requests with nothing to match, which now pass because reconciliation really declines). Zero forbidden words stored, zero wrong changes. About 760 input and 90 output tokens a turn across both steps, against about 670 and 85 for the extractor alone: reconciliation adds roughly a tenth, because most turns store nothing or find nothing close. The test split has not been run: it is read once, when the whole write path (filter, write functions and the loop) is in. All of this is on the dev split, where the prompts and two cases were adjusted, so 111 of 111 is the number the test split has to confirm, not a result of its own.
 
+## Write functions, as built
+
+`backend/app/memory/write.py`. Four functions, `add_memory`, `supersede`, `delete` and `restore`, each writing its change and its `memory_events` row, and `apply_decisions`, which applies what reconciliation decided.
+
+- **The caller owns the transaction.** The four functions flush and do not commit, so an API handler makes one change and commits, and `apply_decisions` applies a whole turn and commits once.
+- **Locked and checked before anything is written.** Rows are read `FOR UPDATE`, in id order so two writers cannot deadlock, and every status is checked before the first insert, so a refused change leaves nothing behind (a test checks this without rolling back first). A test with two sessions shows a change waiting for a concurrent one and then seeing its result: the owner deleting a memory while extraction replaces it ends in `WrongStatus`, not in a replaced deleted memory.
+- **Status moves.** `active` to `superseded` or `deleted`; `superseded` to `deleted`; `deleted` back to what it was. Deleting what is already deleted changes and logs nothing, so it is safe to repeat.
+- **A replacement** adds the new row (with its `created` event) and points each old row at it with `superseded_by`, a `superseded` event each, and an end at the time of the change, or earlier when the old row already had one, so history questions still find it.
+- **`apply_decisions`** embeds every new text in one call before writing (if that fails nothing is written), then applies each decision in its own savepoint. A decision whose memory changed since it was made is skipped and counted, and the rest still apply. It returns what it added, replaced and deleted, and how many it skipped.
+- **Tests:** 31, against the test database, including recall: a deleted memory leaves the vector search and a restored one returns; a replaced one leaves it and is found as history. Nine deliberate breaks (no row lock, no active check, an end always overwritten, restore always active, a repeated delete logging again, skipped decisions not caught, one embedding call per text, restore from any status, an unknown id ignored) each failed a test.
+
+The restore rule changed from the plan: the plan restored to `active` always, which would have put a stale fact back next to the one that replaced it.
+
 ## Memory API
 
 All behind the owner's login, like the rest.
@@ -141,7 +154,7 @@ All behind the owner's login, like the rest.
 | --- | --- |
 | `PATCH /memories/{id}` `{content}` | Supersede an active memory with the new text; returns the new row. 404 for an unknown id, 409 for a memory that is not active, 422 for empty or over-long text |
 | `DELETE /memories/{id}` | Status `deleted`; idempotent (deleting a deleted one is a 204) |
-| `POST /memories/{id}/restore` | A deleted memory becomes active again; 409 for any other status |
+| `POST /memories/{id}/restore` | A deleted memory comes back (as `active`, or as history if it had been replaced); 409 for any other status |
 | `GET /memories/{id}/events` | The log for one memory, oldest first, with reasons and message ids |
 
 An edit is embedded like any new memory; if the embeddings API fails the edit is refused with a clear code, not stored without an embedding.
@@ -192,7 +205,7 @@ Cases cover each trap in `data/memory_traps.yaml` plus ones too small for an end
 | Similar closeness threshold | A cosine threshold set from the dev cases and recorded here; the second call decides within it |
 | Many facts in one message | All are proposed; at most five writes and three deletes per turn, so one odd message cannot rewrite memory |
 | Dates | The extractor resolves relative dates against the turn's date and the owner's time zone and sets only an event's end (`valid_until`; a day ends at the start of the next one in the owner's zone); it never sets `valid_from`, so nothing it stores is hidden by the phase 2 rule. An event with a past end is not offered as upcoming (phase 2 rule, unchanged). A fact that starts to hold later (a job in January) is stored with its date in the text and is visible now; hiding it until then is a later question |
-| Restore | Only for deleted memories; a replaced memory is edited through its current version |
+| Restore | Only for deleted memories, back to the status they had (`superseded` when something had replaced them); a replaced memory is edited through its current version |
 | Edit | A supersede, with reason "edited by the owner" |
 | Memory off in evals | A constructor option turns off both recall and writes, so the control run changes nothing |
 | `last_used_at` | Not touched by writes; it still means "shown in a prompt" |
