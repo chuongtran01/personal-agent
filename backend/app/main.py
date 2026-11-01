@@ -20,6 +20,8 @@ async def lifespan(app: FastAPI):
     for task in list(app.state.turns):
         task.cancel()
     await asyncio.gather(*app.state.turns, return_exceptions=True)
+    if app.state.agent is not None:
+        await app.state.agent.close()  # lets queued memory writes finish, for a few seconds
     await engine.dispose()
 
 

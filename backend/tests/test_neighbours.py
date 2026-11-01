@@ -109,3 +109,27 @@ async def test_the_limit_is_respected_and_the_text_is_embedded_once(session_fact
 
 async def test_nothing_stored_is_no_candidates(session_factory, embedder):
     assert await DbNeighbours(session_factory, embedder).nearest("x", 5) == []
+
+
+async def test_a_request_to_forget_also_sees_replaced_memories_marked_as_such(
+    session_factory, embedder
+):
+    live, replaced, _ = await store(
+        session_factory,
+        embedder,
+        ("live", {}),
+        ("replaced", {"status": "superseded"}),
+        ("deleted", {"status": "deleted"}),
+    )
+
+    found = await DbNeighbours(session_factory, embedder).nearest("x", 10, history=True)
+
+    assert {c.id: c.status for c in found} == {live: "active", replaced: "superseded"}
+
+
+async def test_without_history_every_candidate_is_active(session_factory, embedder):
+    await store(session_factory, embedder, ("live", {}), ("replaced", {"status": "superseded"}))
+
+    found = await DbNeighbours(session_factory, embedder).nearest("x", 10)
+
+    assert {c.status for c in found} == {"active"}

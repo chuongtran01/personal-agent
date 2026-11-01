@@ -95,14 +95,15 @@ class ExtractOnly:
 class InlineNeighbours:
     """``Neighbours`` over the memories written inside a case, by cosine similarity in Python.
 
-    Only active memories are candidates, as in the database. A candidate's id is its position in
-    the case's list, and ``keys`` maps it back to the case's own key."""
+    Candidates are the active memories, and the replaced ones too when a request to forget asks for
+    history, as in the database; deleted ones never are. A candidate's id is its position in the
+    case's list, and ``keys`` maps it back to the case's own key."""
 
     def __init__(self, case: MemoryWriteCase, embedder: Embedder, vectors: dict[str, list[float]]):
         self._embedder = embedder
         self._vectors = vectors
-        self._active = [(n, m) for n, m in enumerate(case.existing) if m.status == "active"]
-        self.keys = {n: m.key for n, m in self._active}
+        self._known = [(n, m) for n, m in enumerate(case.existing) if m.status != "deleted"]
+        self.keys = {n: m.key for n, m in self._known}
 
     async def _vector(self, texts: list[str]) -> list[list[float]]:
         missing = [t for t in dict.fromkeys(texts) if t not in self._vectors]
@@ -110,15 +111,22 @@ class InlineNeighbours:
             self._vectors.update(zip(missing, await self._embedder.embed(missing), strict=True))
         return [self._vectors[t] for t in texts]
 
-    async def nearest(self, text: str, limit: int) -> list[Candidate]:
-        if not self._active:
+    async def nearest(self, text: str, limit: int, *, history: bool = False) -> list[Candidate]:
+        pool = [(n, m) for n, m in self._known if history or m.status == "active"]
+        if not pool:
             return []
-        query, *stored = await self._vector([text, *(m.content for _, m in self._active)])
+        query, *stored = await self._vector([text, *(m.content for _, m in pool)])
         found = [
             Candidate(
-                n, m.kind, m.content, EVAL_NOW - timedelta(days=30), "owner", _cosine(query, v)
+                n,
+                m.kind,
+                m.content,
+                EVAL_NOW - timedelta(days=30),
+                "owner",
+                _cosine(query, v),
+                m.status,
             )
-            for (n, m), v in zip(self._active, stored, strict=True)
+            for (n, m), v in zip(pool, stored, strict=True)
         ]
         return sorted(found, key=lambda c: (-c.similarity, c.id))[:limit]
 
@@ -136,8 +144,8 @@ class _Recording:
         self.keys = inner.keys
         self.notes: list[str] = []
 
-    async def nearest(self, text: str, limit: int) -> list[Candidate]:
-        found = await self._inner.nearest(text, limit)
+    async def nearest(self, text: str, limit: int, *, history: bool = False) -> list[Candidate]:
+        found = await self._inner.nearest(text, limit, history=history)
         top = ", ".join(f"{self.keys[c.id]} {c.similarity:.2f}" for c in found[:3])
         self.notes.append(f"nearest to {text!r}: {top or 'nothing stored'}")
         return found

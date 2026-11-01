@@ -21,8 +21,15 @@ from app.memory.reconcile import (
 WHEN = datetime(2026, 5, 2, tzinfo=UTC)
 
 
-def cand(id, content="The owner lives in Lisbon.", similarity=0.8, kind="fact", source="owner"):
-    return Candidate(id, kind, content, WHEN, source, similarity)
+def cand(
+    id,
+    content="The owner lives in Lisbon.",
+    similarity=0.8,
+    kind="fact",
+    source="owner",
+    status="active",
+):
+    return Candidate(id, kind, content, WHEN, source, similarity, status)
 
 
 class FakeNeighbours:
@@ -31,9 +38,11 @@ class FakeNeighbours:
     def __init__(self, *candidates):
         self.candidates = list(candidates)
         self.asked: list[tuple[str, int]] = []
+        self.history: list[bool] = []
 
-    async def nearest(self, text, limit):
+    async def nearest(self, text, limit, *, history=False):
         self.asked.append((text, limit))
+        self.history.append(history)
         return self.candidates[:limit]
 
 
@@ -415,3 +424,46 @@ async def test_no_owner_words_is_fine():
     await run(FakeNeighbours(cand(7)), llm, ADD)
 
     assert "<owner_said>" not in llm.calls[0].prompt
+
+
+# Replaced memories, for a request to forget the past -------------------------------------------
+
+
+async def test_only_a_request_to_forget_looks_at_the_replaced_memories():
+    neighbours = FakeNeighbours(cand(7))
+    llm = ScriptedStructured(verdict("new"), forget())
+
+    await run(neighbours, llm, ADD, DELETE)
+
+    assert neighbours.history == [False, True]
+
+
+def test_a_replaced_memory_is_marked_no_longer_true_in_the_prompt():
+    prompt = build_prompt(
+        DELETE,
+        [
+            cand(1, "The owner lived in Lisbon.", status="superseded"),
+            cand(2, "The owner lives in Porto."),
+        ],
+    )
+
+    assert (
+        "id 1 | fact | owner said, 2026-05-02, no longer true | The owner lived in Lisbon."
+        in prompt
+    )
+    assert "id 2 | fact | owner said, 2026-05-02 | The owner lives in Porto." in prompt
+
+
+async def test_a_replaced_memory_can_be_named_by_a_request_to_forget():
+    old = cand(1, "The owner lived in Lisbon.", status="superseded")
+    llm = ScriptedStructured(forget(1))
+
+    result = await run(FakeNeighbours(old, cand(2, "The owner lives in Porto.")), llm, DELETE)
+
+    assert result.decisions == (Decision("delete", DELETE, (1,), REASONS["delete"]),)
+
+
+def test_the_delete_instructions_explain_no_longer_true():
+    from app.memory.reconcile import DELETE_INSTRUCTIONS
+
+    assert "no longer true" in DELETE_INSTRUCTIONS

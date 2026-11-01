@@ -42,8 +42,10 @@ from app.agent.messages import AssistantMessage, ToolCall, ToolResultMessage, Us
 from app.agent.prompt import build_system_prompt
 from app.config import settings
 from app.memory.embeddings import Embedder
+from app.memory.extract import ContextMessage
 from app.memory.recall import Recalled, mark_used, recall
 from app.memory.search import Mode, SearchResult
+from app.memory.writer import MemoryWriter, WriteJob
 
 log = logging.getLogger(__name__)
 
@@ -128,12 +130,28 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _earlier_messages(history: Sequence) -> tuple[ContextMessage, ...]:
+    """The chat before this turn's owner message, as the memory writer reads it.
+
+    Only what the owner and the assistant said in words: a tool call, and above all a tool result,
+    is outside text and never reaches the extractor."""
+    earlier: list[ContextMessage] = []
+    for message in history[:-1]:  # the last one is this turn's owner message
+        if isinstance(message, UserMessage):
+            earlier.append(ContextMessage("owner", message.text))
+        elif isinstance(message, AssistantMessage) and message.text and not message.tool_calls:
+            earlier.append(ContextMessage("assistant", message.text))
+    return tuple(earlier)
+
+
 @dataclass
 class Turn:
     """One accepted owner message. Read ``events()`` to the end, or call ``close()``."""
 
     agent: "AgentLoop"
     session_id: uuid.UUID
+    owner_text: str = ""
+    owner_message_id: int | None = None
     _released: bool = field(default=False, init=False)
 
     def close(self) -> None:
@@ -161,6 +179,7 @@ class AgentLoop:
         clock: Callable[[], datetime] = utcnow,
         recall_mode: Mode | None = None,
         recall_enabled: bool = True,
+        memory_writer: MemoryWriter | None = None,
         max_steps: int | None = None,
         retry_delay: float = RETRY_DELAY_SECONDS,
     ):
@@ -171,6 +190,7 @@ class AgentLoop:
         self._clock = clock
         self._recall_mode = recall_mode
         self._recall_enabled = recall_enabled
+        self._memory_writer = memory_writer
         self._max_steps = settings.agent_max_steps if max_steps is None else max_steps
         self._retry_delay = retry_delay
         self._busy: set[uuid.UUID] = set()
@@ -178,6 +198,15 @@ class AgentLoop:
     @property
     def recall_enabled(self) -> bool:
         return self._recall_enabled
+
+    @property
+    def memory_writer(self) -> MemoryWriter | None:
+        return self._memory_writer
+
+    async def close(self) -> None:
+        """Let queued memory writes finish, for a server that is shutting down."""
+        if self._memory_writer is not None:
+            await self._memory_writer.close()
 
     async def start(self, session_id: uuid.UUID, text: str) -> Turn:
         """Accept an owner message: check it, take the chat's turn and store the message.
@@ -191,14 +220,14 @@ class AgentLoop:
         if session_id in self._busy:
             raise TurnInProgress("this chat is still answering the last message")
         self._busy.add(session_id)  # no await between the check and this line
-        turn = Turn(self, session_id)
+        turn = Turn(self, session_id, owner_text=text)
         try:
             async with self._sessions() as db:
                 if not await store.session_exists(db, session_id):
                     raise SessionNotFound("no such chat")
                 if await store.count_messages(db, session_id) >= settings.max_session_messages:
                     raise ChatFull("this chat is full; start a new one")
-                await store.append(db, session_id, UserMessage(text=text))
+                turn.owner_message_id = await store.append(db, session_id, UserMessage(text=text))
         except BaseException:
             turn.close()
             raise
@@ -216,6 +245,7 @@ class AgentLoop:
             )
             return
 
+        context = _earlier_messages(history)
         now = self._clock()
         recalled = Recalled(current=())
         recall_seconds = 0.0
@@ -279,6 +309,7 @@ class AgentLoop:
                 await self._mark_used(recalled, now)
 
             if not calls:
+                self._queue_memory_write(turn, text, context, now)
                 yield AgentDone(
                     message_id=message_id,
                     usage=usage,
@@ -295,6 +326,19 @@ class AgentLoop:
                 history.append(result)
 
         yield TurnError("step_limit", "the agent used too many steps without an answer")
+
+    def _queue_memory_write(
+        self, turn: Turn, reply: str, context: tuple[ContextMessage, ...], now: datetime
+    ) -> None:
+        """Hand the finished turn to the memory writer. Never fails the turn: the answer is stored."""
+        if self._memory_writer is None or turn.owner_message_id is None:
+            return
+        try:
+            self._memory_writer.submit(
+                WriteJob(turn.owner_text, turn.owner_message_id, now, reply, context)
+            )
+        except Exception:
+            log.exception("could not queue the memory write for chat %s", turn.session_id)
 
     async def _call_model(
         self, system: str, history: Sequence, tools: Sequence[ToolSpec]

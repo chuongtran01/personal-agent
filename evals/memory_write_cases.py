@@ -8,7 +8,8 @@ make, and ``memory_write_checks`` judges those changes in code.
 A case holds:
 
 - ``existing``: memories already stored, each with a case-local ``key`` the changes refer to. A
-  superseded or deleted one is there to show that it is never touched again.
+  superseded one may be forgotten (a request about the past) but never replaced; a deleted one is
+  there to show that it is never touched again.
 - ``context``: earlier messages of the chat, for a turn that only makes sense with them.
 - ``owner``: the owner's messages of this turn. These are the only source of a memory.
 - ``reply``: what the assistant answered. It is shown as context and is never a source.
@@ -145,8 +146,12 @@ def _problem(case: MemoryWriteCase) -> str | None:
     for key in replaced + case.deletes:
         if key not in by_key:
             return f"names unknown memory {key}"
+    for key in replaced:
         if by_key[key].status != "active":
-            return f"names memory {key}, which is not active, so it cannot be changed"
+            return f"replaces memory {key}, which is not active, so it cannot be replaced"
+    for key in case.deletes:
+        if by_key[key].status == "deleted":
+            return f"deletes memory {key}, which is already deleted"
     if len(case.deletes) != len(set(case.deletes)):
         return "a memory is deleted twice"
     if set(replaced) & set(case.deletes):

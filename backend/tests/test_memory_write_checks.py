@@ -144,16 +144,36 @@ def test_a_delete_must_hit_exactly_the_memories_meant():
     assert not both.passed
 
 
-def test_a_change_to_a_memory_that_is_not_active_or_not_shown_is_wrong():
+DEAD = {"key": "dead", "kind": "fact", "content": "The owner had a cat.", "status": "deleted"}
+
+
+def test_a_change_to_a_memory_that_cannot_take_it_or_was_not_shown_is_wrong():
+    case = make(existing=[OLD, DEAD, CITY], no_changes=True)
+
+    assert check_case(case, [Delete("dead")]).wrong_changes == (
+        "delete:dead (not a memory that can be deleted)",
+    )
+    assert check_case(case, [Delete("ghost")]).wrong_changes == (
+        "delete:ghost (not a memory that can be deleted)",
+    )
+    assert check_case(case, [Supersede("old", "fact", "x")]).wrong_changes == (
+        "replace:old (not a memory that can be replaced)",
+    )
+    assert check_case(case, [Supersede("dead", "fact", "x")]).wrong_changes == (
+        "replace:dead (not a memory that can be replaced)",
+    )
+
+
+def test_a_replaced_memory_can_be_deleted_when_the_owner_meant_it():
+    case = make(existing=[OLD, CITY], deletes=["old"])
+
+    assert check_case(case, [Delete("old")]).passed
+
+
+def test_a_replaced_memory_deleted_when_nobody_asked_is_a_wrong_change():
     case = make(existing=[OLD, CITY], no_changes=True)
 
-    assert check_case(case, [Delete("old")]).wrong_changes == ("delete:old (not an active memory)",)
-    assert check_case(case, [Delete("ghost")]).wrong_changes == (
-        "delete:ghost (not an active memory)",
-    )
-    assert (
-        check_case(case, [Supersede("old", "fact", "x")]).wrong_changes[0].startswith("replace:old")
-    )
+    assert check_case(case, [Delete("old")]).wrong_changes == ("delete:old",)
 
 
 def test_a_forbidden_word_in_a_new_memory_is_a_stored_failure():
@@ -267,7 +287,7 @@ def test_a_replacement_that_also_names_an_unknown_memory_is_wrong():
 
     verdict = check_case(case, [Supersede("city", "fact", "Porto.", also=("ghost",))])
 
-    assert verdict.wrong_changes == ("replace:ghost (not an active memory)",)
+    assert verdict.wrong_changes == ("replace:ghost (not a memory that can be replaced)",)
 
 
 def test_an_optional_write_may_be_there_or_missing():

@@ -9,6 +9,7 @@ from memory_write_cases import EVAL_TZ, load_cases
 from memory_write_checks import Add, Delete, Supersede
 from memory_write_eval import NoWrites, Outcome, run_case, summarize
 from scripted_llm import answer
+from word_embedder import WordEmbedder
 
 from app.agent.llm import Usage
 
@@ -278,24 +279,6 @@ def test_an_empty_stage_is_zero_of_zero():
 # The pipeline writer: extract, then reconcile against the case's memories -----------------------
 
 
-class WordEmbedder:
-    """Vectors from word overlap, so similar sentences are near and no key is needed."""
-
-    def __init__(self):
-        self.calls = []
-
-    async def embed(self, texts):
-        self.calls.append(list(texts))
-        out = []
-        for text in texts:
-            vector = [0.0] * 128
-            for word in text.lower().replace(".", "").split():
-                vector[sum(map(ord, word)) % 128] += 1.0
-            norm = sum(v * v for v in vector) ** 0.5
-            out.append([v / norm for v in vector])
-        return out
-
-
 def proposals(*items):
     return answer({"proposals": list(items)})
 
@@ -488,3 +471,39 @@ async def test_a_forget_request_that_names_a_secret_still_reaches_reconciliation
     )
 
     assert outcome.changes == [Delete("surgery")]
+
+
+async def test_a_request_to_forget_the_past_deletes_the_replaced_memory_and_not_the_current_one():
+    outcome, llm = await play(
+        "e038",
+        proposals(delete_proposal("The owner's former home in Lisbon.")),
+        forget(0),  # the replaced memory is first in the case, so it is candidate 0
+    )
+
+    assert outcome.changes == [Delete("city-old")]
+    assert "no longer true" in llm.calls[1].prompt
+    assert memory_write_eval.check_case(case("e038"), outcome.changes).passed
+
+
+async def test_an_add_never_sees_the_replaced_memories():
+    _, llm = await play(
+        "e038", proposals(add_proposal("The owner lives in Lisbon.")), verdict("new")
+    )
+
+    assert "no longer true" not in llm.calls[1].prompt
+    assert "id 1 |" in llm.calls[1].prompt and "id 0 |" not in llm.calls[1].prompt
+
+
+async def test_the_inline_lookup_offers_replaced_memories_only_for_history():
+    from memory_write_eval import InlineNeighbours
+
+    inline = InlineNeighbours(case("e038"), WordEmbedder(), {})
+
+    plain = await inline.nearest("The owner lived in Lisbon.", 5)
+    past = await inline.nearest("The owner lived in Lisbon.", 5, history=True)
+
+    assert [inline.keys[c.id] for c in plain] == ["city"]
+    assert {inline.keys[c.id]: c.status for c in past} == {
+        "city": "active",
+        "city-old": "superseded",
+    }

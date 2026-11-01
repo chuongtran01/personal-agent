@@ -235,3 +235,38 @@ def test_an_optional_write_alone_is_fine_when_the_case_deletes_something(tmp_pat
     )
 
     assert case.deletes == ["city"]
+
+
+def test_a_replaced_memory_may_be_deleted_but_not_replaced_and_a_deleted_one_may_be_neither(
+    tmp_path,
+):
+    old = {"key": "old", "kind": "fact", "content": "Lived in Faro.", "status": "superseded"}
+    dead = {"key": "dead", "kind": "fact", "content": "Had a cat.", "status": "deleted"}
+    live = ROW["existing"][0]
+    write = {**ROW["writes"][0], "replaces": None, "optional": True}
+
+    (case,) = load(
+        tmp_path,
+        {
+            **ROW,
+            "category": "delete",
+            "existing": [old, live],
+            "writes": [write],
+            "deletes": ["old"],
+        },
+    )
+    assert case.deletes == ["old"]
+    broken(
+        tmp_path,
+        "not active",
+        existing=[old, live],
+        writes=[{**ROW["writes"][0], "replaces": "old"}],
+    )
+    broken(
+        tmp_path,
+        "already deleted",
+        category="delete",
+        existing=[dead, live],
+        writes=[],
+        deletes=["dead"],
+    )

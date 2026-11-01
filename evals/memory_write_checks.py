@@ -93,6 +93,7 @@ def check_case(case: MemoryWriteCase, changes: list[Change]) -> Verdict:
     failures: list[str] = []
     wrong: list[str] = []
     active = {memory.key for memory in case.existing if memory.status == "active"}
+    deletable = {memory.key for memory in case.existing if memory.status != "deleted"}
     meant_deleted = set(case.deletes)
     meant_replaced = {want.replaces for want in case.writes if want.replaces}
 
@@ -102,8 +103,8 @@ def check_case(case: MemoryWriteCase, changes: list[Change]) -> Verdict:
         what = "delete" if isinstance(change, Delete) else "replace"
         targets = [change.target] if isinstance(change, Delete) else [change.target, *change.also]
         for target in targets:
-            if target not in active:
-                wrong.append(f"{what}:{target} (not an active memory)")
+            if target not in (deletable if what == "delete" else active):
+                wrong.append(f"{what}:{target} (not a memory that can be {what}d)")
             elif isinstance(change, Delete) and target not in meant_deleted:
                 wrong.append(f"delete:{target}")
             elif isinstance(change, Supersede) and target not in meant_replaced:

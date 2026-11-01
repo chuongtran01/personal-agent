@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     judge_model: str = "gpt-6-luna"
     # The call after a turn that decides what to remember (docs/PHASE5.md); empty means the chat model
     extraction_model: str = ""
+    # Whether the server writes memories after a turn; off keeps recall and stops learning
+    memory_writes_enabled: bool = True
     # A stored memory is a candidate for reconciliation only when its cosine similarity to the new
     # statement is at least this; set from the dev cases (docs/PHASE5.md)
     reconcile_min_similarity: float = 0.35
