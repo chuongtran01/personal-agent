@@ -1,6 +1,7 @@
 """Dependencies shared by the endpoints."""
 
 import logging
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request
@@ -44,3 +45,8 @@ def get_agent(request: Request) -> AgentLoop:
             log.error("the agent cannot start: %s", error)
             raise HTTPException(503, "the agent is not configured") from None
     return state.agent
+
+
+def get_now() -> datetime:
+    """The time a write is stamped with; a dependency so a test can fix it."""
+    return datetime.now(UTC)

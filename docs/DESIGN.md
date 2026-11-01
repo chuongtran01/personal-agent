@@ -29,7 +29,7 @@ The new problem is memory. A support agent forgets everything between chats, and
 
 ```mermaid
 flowchart TD
-    UI["Chat surface<br/>streaming chat, memory viewer and editor"]
+    UI["Chat surface<br/>streaming chat, memory viewer with delete"]
     API["FastAPI<br/>Authentication, sessions, streaming"]
     AGENT["Agent loop<br/>OpenAI API, no framework"]
     MEM["Memory<br/>write: extract and reconcile after a turn<br/>read: retrieve before a turn"]
@@ -154,7 +154,7 @@ The model answers differently each time, so each dev run is repeated three times
 
 ## Development roadmap
 
-Eleven phases, each ending in a gate that must pass before the next starts. Docs for a phase are written before its code.
+Twelve phases, each ending in a gate that must pass before the next starts. Docs for a phase are written before its code. Phase 12 was added last, so its number is not its place in the order of work: it needs the tools of phase 6 and the confirmation of phase 7, and is built after them.
 
 | # | Phase | Deliverables | Gate |
 | --- | --- | --- | --- |
@@ -162,13 +162,14 @@ Eleven phases, each ending in a gate that must pass before the next starts. Docs
 | 2 | Memory store and retrieval | `memories` table, embedding, hybrid search with recency, retrieval evals on a hand-written set | recall@5 baseline set |
 | 3 | Agent loop and API | Loop with recall before each call, sessions, owner login, streaming API, agent evals with a memory-off arm | A stored fact is used in a new session without being asked, memory on beats memory off, nothing that may not be used reaches the prompt |
 | 4 | Web app | Login, chat list, streaming chat view, recalled memories under each reply (stored with the reply, so a reload shows them), read-only memory list | The owner can log in, chat and see which memories were recalled, in a browser |
-| 5 | Memory writes | Extraction, reconciliation, supersede and forget, `memory_events`, trap evals, edit and delete in the web app's memory list, and the agent eval resets the memories before every case (phase 3 seeds once per run, which is only safe while cases cannot write) | A fact stated in one session is used in the next; update, forgetting and false-memory evals run |
-| 6 | Read tools over MCP | MCP client, calendar and email read servers, token per call | Read scenarios pass, injection evals on emails run |
+| 5 | Memory writes | Extraction, reconciliation, supersede and forget, `memory_events`, trap evals, delete and history in the web app's memory list, and the agent eval resets the memories before every case (phase 3 seeds once per run, which is only safe while cases cannot write) | A fact stated in one session is used in the next; update, forgetting and false-memory evals run |
+| 6 | Read tools over MCP | MCP client, calendar and email read servers, token per call, and a read-only `search_memory` tool so the model can write its own query (the `a003` recall miss) | Read scenarios pass, injection evals on emails run, and the `a003` paraphrase case is answered through `search_memory` |
 | 7 | Writes with confirmation | Create and send tools, the confirmation gate, idempotency keys, `unknown` handling | No outside write without a matching confirmation |
 | 8 | Chat compaction | A stored summary replaces old messages in the prompt once the token budget is passed; originals kept; pending confirmations and tool output kept intact or labelled as data | Compaction evals keep early facts and instructions, never drop a pending confirmation, and cut prompt tokens |
 | 9 | Evals, tracing and polish | Full evals, the memory ablation, Langfuse, README, demo | Numbers in the README |
 | 10 | Terminal client | `app/cli.py`, `make chat`: login, streaming reply, memories used, `/memories`; a second client of the same API | The terminal client completes a chat against the running API |
 | 11 | Multi-user | Users table, `owner_id` on every table and query, signup and login per user, per-user Google connections and MCP tokens, cross-user leak evals | A user's memory, chats and tool results never reach another user's prompt, API response or tool call |
+| 12 | Memory management by chat | `change_memory` and `forget_memory` behind the loop's tool seam: each names the exact memory (found with phase 6's `search_memory`), shows the change in words and waits for the owner's confirmation (phase 7's gate) before it is applied; the result is known in the same turn, so the reply says what really changed; the background write path keeps handling what the owner simply states | A change or a request to forget in chat is applied to exactly the memory the owner was shown, and only after a matching confirmation; the reply never claims a change that did not happen; an instruction inside tool output or an email never changes memory; the cases that work through the background path keep passing |
 
 ## Risks and open decisions
 
@@ -183,6 +184,8 @@ Eleven phases, each ending in a gate that must pass before the next starts. Docs
 | Prompt injection through email stored as memory | Risk | `source_kind`; no owner-level write from external text; injection evals before any write tool exists |
 | The model confirming its own action | Risk | Confirmation is checked in code from the owner's own message |
 | Sensitive data stored in memory | Risk | A trap in the eval set, and a filter before write; the memory viewer lets the owner delete anything |
+| A model changing memory through a tool (phase 12) | Risk | The same confirmation as any outside write: the change names the exact memory and is shown in words; only the owner's own matching reply applies it; tool output and email text can never authorize a change; the filter and the event log apply as on every write |
+| Memory tools and the background write path writing the same thing twice (phase 12) | Open decision | Skip the background extraction for a turn in which a memory tool changed memory, or let reconciliation treat the second write as a repeat; decide with the evals |
 | Double send after a lost answer | Risk | Idempotency key and `unknown` handling, plus a test that forces a lost answer after the write |
 | Eval flakiness, now with extraction as a second model step | Risk | Pin judge model and settings; repeat dev three times; test the write path alone on fixed turns |
 | Real personal data in tests and traces | Risk | Evals use seeded fake accounts only; Langfuse off or scrubbed for real use |

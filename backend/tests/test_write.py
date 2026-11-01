@@ -16,7 +16,6 @@ from app.memory.write import (
     add_memory,
     apply_decisions,
     delete,
-    restore,
     supersede,
 )
 from app.models import Memory, MemoryEvent
@@ -221,7 +220,7 @@ async def test_replacing_an_unknown_memory_or_nothing_is_refused(session, embedd
         await supersede(session, [], **kwargs)
 
 
-# delete and restore ---------------------------------------------------------------------------
+# delete ---------------------------------------------------------------------------------------
 
 
 async def test_a_delete_marks_the_memory_and_logs_why(session, embedder):
@@ -243,7 +242,7 @@ async def test_a_delete_marks_the_memory_and_logs_why(session, embedder):
     )
 
 
-async def test_the_text_survives_a_delete_so_that_it_can_be_restored(session, embedder):
+async def test_the_text_stays_on_file_after_a_delete(session, embedder):
     memory_id = await make(session, embedder, "The owner has a cat.")
 
     await delete(session, [memory_id], now=LATER, reason="r")
@@ -286,52 +285,10 @@ async def test_deleting_several_memories_is_one_change_and_an_unknown_one_stops_
         await delete(session, [first, 404], now=LATER, reason="r")
 
 
-async def test_a_restored_memory_is_active_again_and_logged(session, embedder):
-    memory_id = await make(session, embedder)
-    await delete(session, [memory_id], now=LATER, reason="r")
-    await session.commit()
-
-    status = await restore(session, memory_id, now=LATER + timedelta(days=1), reason="undone")
-    await session.commit()
-
-    assert status == "active" and (await row(session, memory_id)).status == "active"
-    assert (await events(session, memory_id))[-1][:2] == ("restored", "undone")
-
-
-async def test_a_memory_that_was_replaced_before_it_was_deleted_comes_back_as_history(
-    session, embedder
-):
-    old = await make(session, embedder)
-    new = await replace(session, embedder, [old])
-    await delete(session, [old], now=LATER, reason="r")
-    await session.commit()
-
-    status = await restore(session, old, now=LATER, reason="undone")
-    await session.commit()
-
-    memory = await row(session, old)
-    assert status == "superseded" and memory.superseded_by == new
-
-
-@pytest.mark.parametrize("status", ["active", "superseded"])
-async def test_only_a_deleted_memory_can_be_restored(session, embedder, status):
-    memory_id = await make(session, embedder)
-    if status == "superseded":
-        await replace(session, embedder, [memory_id])
-
-    with pytest.raises(WrongStatus, match=status):
-        await restore(session, memory_id, now=LATER, reason="r")
-
-
-async def test_restoring_an_unknown_memory_is_refused(session):
-    with pytest.raises(MemoryNotFound):
-        await restore(session, 404, now=LATER, reason="r")
-
-
 # what recall sees -----------------------------------------------------------------------------
 
 
-async def test_a_deleted_memory_is_not_recalled_and_a_restored_one_is(session, embedder):
+async def test_a_deleted_memory_is_not_recalled(session, embedder):
     memory_id = await make(session, embedder, "The owner has a cat called Miso.")
 
     async def recalled():
@@ -344,9 +301,6 @@ async def test_a_deleted_memory_is_not_recalled_and_a_restored_one_is(session, e
     await delete(session, [memory_id], now=LATER, reason="r")
     await session.commit()
     assert await recalled() == []
-    await restore(session, memory_id, now=LATER, reason="r")
-    await session.commit()
-    assert await recalled() == [memory_id]
 
 
 async def test_a_replaced_memory_leaves_recall_and_is_found_as_history(session, embedder):

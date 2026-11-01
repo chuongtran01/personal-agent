@@ -5,7 +5,7 @@
 
 ## Goal
 
-Until now memory was read-only: the seed file filled it and the agent only recalled. This phase lets the agent learn. After each turn a separate step reads what the owner said and decides what is worth keeping, compares it with what is already stored, and writes the change. The owner can also correct memory by hand in the web app: edit a memory, delete it, bring a deleted one back.
+Until now memory was read-only: the seed file filled it and the agent only recalled. This phase lets the agent learn. After each turn a separate step reads what the owner said and decides what is worth keeping, compares it with what is already stored, and writes the change. The owner's controls are deliberately few: delete a memory, and see why one exists. There is no edit and no restore; to correct or bring back a memory the owner tells the assistant, which goes through the filter and reconciliation like every other write (see "Edit and restore were built and then removed").
 
 Writing is where memory goes wrong in ways reading cannot: it stores things it should not (a card number, a passing remark, text from an email), it stores the same fact five times, it keeps the old city next to the new one, and it deletes the wrong memory when told to forget. So the work is ordered evals first. The extraction eval and the trap cases are written before the extractor, and a few of their checks are zero-tolerance gates, not numbers to improve.
 
@@ -16,11 +16,11 @@ Two pieces of earlier phases are completed here. Phase 3 seeds the memory once p
 - [x] **Memory write eval and cases first**: `evals/memory_write_cases.py`, `evals/memory_write_checks.py`, `evals/memory_write_eval.py`, `evals/datasets/memory_write.{dev,test}.jsonl`. Fixed turns, each with the memory changes it must and must not produce, checked by code. Written, and run against a stub that stores nothing (the baseline), before the extractor exists
 - [x] **Extractor**: `backend/app/memory/extract.py`. One model call after a turn: the owner's messages in, proposed changes out (`add`, `delete`) as structured output, validated before anything uses them
 - [x] **Reconciliation**: `backend/app/memory/reconcile.py`. Each proposal is compared with the closest active memories; the result is `noop`, `add`, `supersede(id)` or `delete(id)`, and the rules that keep it safe are code, not prompt
-- [x] **Write functions with events**: `backend/app/memory/write.py`. `add`, `supersede`, `delete`, `restore`, each in one transaction with its `memory_events` row and the reason, so any change can be explained and undone
+- [x] **Write functions with events**: `backend/app/memory/write.py`. `add_memory`, `supersede` and `delete`, each with its `memory_events` row and the reason, so any change can be explained, and `apply_decisions` for a whole turn
 - [x] **Filter before write**: `backend/app/memory/filter.py`. Card numbers, passwords, PINs and long identifiers are dropped in code whatever the model proposed
 - [x] **Agent integration**: the loop starts extraction after the reply is stored and `done` is sent; a failure there never touches the reply; a constructor option turns it off for the memory-off eval
-- [ ] **Memory API**: `PATCH /memories/{id}` (edit), `DELETE /memories/{id}`, `POST /memories/{id}/restore`, `GET /memories/{id}/events`
-- [ ] **Memory list controls**: edit, delete and restore in the web app, with the history of one memory (when it was written, from which message, what replaced it)
+- [x] **Memory API**: `DELETE /memories/{id}` and `GET /memories/{id}/events`
+- [ ] **Memory list controls**: delete in the web app, and the history of one memory (when it was written, from which message, what replaced it)
 - [ ] **Eval isolation**: the agent eval restores the seeded memories before every case, without calling the embeddings API again
 - [ ] **Memory eval**: `evals/memory_eval.py` plays the trap cases (sessions, gaps, probe) against the real agent, memory on and off, dev three times and test once
 - [ ] **Tests**: unit tests with a fake model for extraction, reconciliation, the filter, the write functions, the API and the loop. None needs an API key
@@ -41,7 +41,7 @@ turn ends  --> reply stored --> AgentDone sent --> (the chat is free for the nex
         v
    the next recall sees it
 
-owner edits in the web app --> PATCH / DELETE / restore --> the same write functions
+owner deletes in the web app --> DELETE --> the same write function
 ```
 
 Extraction runs after the reply, so it adds no latency to the answer. The cost is that it can still be running when the owner sends the next message. Extractions go through one queue and run in order, so a second one reconciles against what the first wrote, and a recall that races a write sees the memory one message late, which is acceptable. The queue lives in the one worker process, like the turn lock (see `PHASE3.md`).
@@ -79,9 +79,9 @@ Dropped in code, after extraction and before reconciliation: card numbers (a dig
 
 ### What a write records
 
-`memory_events` already allows `created`, `superseded`, `deleted` and `restored`. Each write adds a row with the memory id, the event, a reason in words ("owner said they moved", "owner asked to forget", "edited in the web app"). A proposal that ends as a no-op writes nothing and so has no event, and the message id it came from. `source_message_id` on the memory is the owner's message and `source_kind` is `owner`. This phase never writes `external`.
+`memory_events` already allows `created`, `superseded`, `deleted` and `restored`; this phase writes the first three, since there is no restore. Each write adds a row with the memory id, the event, a reason in words ("the owner said it", "the owner's new statement replaced it", "the owner asked to forget it") and the message id it came from. A proposal that ends as a no-op writes nothing and so has no event. `source_message_id` on the memory is the owner's message and `source_kind` is `owner`. This phase never writes `external`.
 
-An edit in the web app is a supersede (a new row with the new text, the old one kept as history, reason "edited by the owner"), so an edit can be undone by reading the history, and recalled memories shown under old replies resolve to "since replaced". A restore puts a deleted memory back to what it was: `active`, or `superseded` when something replaced it before it was deleted, because restoring the old fact beside its replacement would revive a stale one. Only a deleted memory can be restored; to change a replaced one the owner edits its current version.
+The owner's own change in the app is delete only. A deleted memory is final: it is never recalled again, and the row and its event stay so the change can be explained. Recalled memories shown under old replies resolve to "since replaced" or "deleted".
 
 ## Memory write eval, as built
 
@@ -135,16 +135,16 @@ One thing it showed for reconciliation: for "Actually, I hate mornings. I run in
 
 ## Write functions, as built
 
-`backend/app/memory/write.py`. Four functions, `add_memory`, `supersede`, `delete` and `restore`, each writing its change and its `memory_events` row, and `apply_decisions`, which applies what reconciliation decided.
+`backend/app/memory/write.py`. Three functions, `add_memory`, `supersede` and `delete`, each writing its change and its `memory_events` row, and `apply_decisions`, which applies what reconciliation decided.
 
-- **The caller owns the transaction.** The four functions flush and do not commit, so an API handler makes one change and commits, and `apply_decisions` applies a whole turn and commits once.
+- **The caller owns the transaction.** The three functions flush and do not commit, so an API handler makes one change and commits, and `apply_decisions` applies a whole turn and commits once.
 - **Locked and checked before anything is written.** Rows are read `FOR UPDATE`, in id order so two writers cannot deadlock, and every status is checked before the first insert, so a refused change leaves nothing behind (a test checks this without rolling back first). A test with two sessions shows a change waiting for a concurrent one and then seeing its result: the owner deleting a memory while extraction replaces it ends in `WrongStatus`, not in a replaced deleted memory.
-- **Status moves.** `active` to `superseded` or `deleted`; `superseded` to `deleted`; `deleted` back to what it was. Deleting what is already deleted changes and logs nothing, so it is safe to repeat.
+- **Status moves.** `active` to `superseded` or `deleted`; `superseded` to `deleted`; `deleted` is final. Deleting what is already deleted changes and logs nothing, so it is safe to repeat.
 - **A replacement** adds the new row (with its `created` event) and points each old row at it with `superseded_by`, a `superseded` event each, and an end at the time of the change, or earlier when the old row already had one, so history questions still find it.
 - **`apply_decisions`** embeds every new text in one call before writing (if that fails nothing is written), then applies each decision in its own savepoint. A decision whose memory changed since it was made is skipped and counted, and the rest still apply. It returns what it added, replaced and deleted, and how many it skipped.
-- **Tests:** 31, against the test database, including recall: a deleted memory leaves the vector search and a restored one returns; a replaced one leaves it and is found as history. Nine deliberate breaks (no row lock, no active check, an end always overwritten, restore always active, a repeated delete logging again, skipped decisions not caught, one embedding call per text, restore from any status, an unknown id ignored) each failed a test.
+- **Tests:** 26, against the test database, including recall: a deleted memory leaves the vector search, and a replaced one leaves it and is found as history. Nine deliberate breaks were run while a restore still existed (no row lock, no active check, an end always overwritten, restore always active, a repeated delete logging again, skipped decisions not caught, one embedding call per text, restore from any status, an unknown id ignored) and each failed a test; the two about restore went with it, and the other seven still apply.
 
-The restore rule changed from the plan: the plan restored to `active` always, which would have put a stale fact back next to the one that replaced it.
+
 
 ## Filter, as built
 
@@ -167,7 +167,7 @@ The restore rule changed from the plan: the plan restored to `active` always, wh
 
 **What it did in the eval.** On dev, two runs of the whole pipeline (74 cases) passed 74 of 74 with the filter in place, and it dropped nothing: the extractor never proposed a secret in those cases, so here the filter is a backstop that was not tested by the model, only by the unit tests and by scripted extractors that propose a card number or a passport number.
 
-**Not covered yet.** The owner's own edit in the web app should go through the same filter; that comes with the API. The filter reads a proposal's text only, so a secret spelled out in words ("four one one one…") passes, and so does a card number the owner types into a memory by hand in a format it does not match. It is a guarantee against the shapes above, not against every way to write a secret.
+**Limits.** The filter reads a proposal's text only, so a secret spelled out in words ("four one one one…") passes. It is a guarantee against the shapes above, not against every way to write a secret.
 
 ## Loop integration, as built
 
@@ -186,24 +186,36 @@ The restore rule changed from the plan: the plan restored to `active` always, wh
 
 **Still open.** The assistant's wording when told to forget is not controlled yet. In the first run it said "I can't delete the saved note from here, but I'll treat it as forgotten" (the memory then stayed and was used), and in the second "Done. I won't use or bring up that you used to live in Lisbon" (which was true). The system prompt says it cannot take actions, and nothing tells it that memory is updated after its reply. The plan's decision is that it says it will stop using it; changing the prompt moves the agent eval baseline, so it is measured separately.
 
-## Memory API
+## Memory API, as built
 
-All behind the owner's login, like the rest.
+`backend/app/api/memories.py`. Behind the owner's login, like the rest. Errors are `{"detail": {"code", "message"}}`, as in the chat API.
 
 | Call | Does |
 | --- | --- |
-| `PATCH /memories/{id}` `{content}` | Supersede an active memory with the new text; returns the new row. 404 for an unknown id, 409 for a memory that is not active, 422 for empty or over-long text |
-| `DELETE /memories/{id}` | Status `deleted`; idempotent (deleting a deleted one is a 204) |
-| `POST /memories/{id}/restore` | A deleted memory comes back (as `active`, or as history if it had been replaced); 409 for any other status |
-| `GET /memories/{id}/events` | The log for one memory, oldest first, with reasons and message ids |
+| `GET /memories` | The list, newest first, by status (phase 4, unchanged) |
+| `DELETE /memories/{id}` | Status `deleted`, whatever it was (a replaced memory too): it is never recalled again. The text stays on file and is listed under Deleted. Deleting what is deleted is a 204 again, with no second event |
+| `GET /memories/{id}/events` | The log for one memory, oldest first: event, reason, message id (null for the owner's own actions), time |
 
-An edit is embedded like any new memory; if the embeddings API fails the edit is refused with a clear code, not stored without an embedding.
+The only error is `memory_not_found` (404) for an unknown id. There is no `PATCH`, no `PUT`, no `POST` and no restore (a test pins that they answer 405 and 404). `get_now` is the clock, a dependency so a test can fix it. The delete reason is a fixed phrase, "deleted by the owner in the app", that never quotes the text.
+
+**Tests:** 12 for the endpoints, against the test database: sign-in on both, delete (the text kept, never recalled again, twice, a replaced memory, an unknown one), the events (their order and reasons, a replacement's, an unknown memory's) and the absence of the removed routes. Six deliberate breaks on what is left (no commit, an unknown id uncaught, a wrong reason, events newest first, no 404 for the events of an unknown memory, a 200 instead of a 204) were caught except the last, which changes nothing a client sees because the handler returns an explicit 204.
+
+## Edit and restore were built and then removed
+
+The API first had `PATCH /memories/{id}` (edit) and `POST /memories/{id}/restore`, with 36 tests, and a real run showed them working. They were removed before any screen used them, for these reasons:
+
+- **They are second ways to do what the agent already does safely.** "Actually I live in Porto" goes through the filter, reconciliation, supersede and the event log; saying a fact again after a mistaken delete does too. An edit or a restore skipped all of that.
+- **Restore can put a memory beside one that contradicts it.** Delete "lives in Lisbon", say "I live in Porto", restore Lisbon: two active, contradicting facts, which is the problem the whole design exists to prevent. Warning about it was possible, but it is more machinery (a similarity check, a response field, a screen) for something the agent covers.
+- **Edit had loose ends.** It could duplicate or contradict another memory, an event's date could not be edited so a changed date kept a stale end, it needed its own filter check, and its rows had no source message.
+- **A restore sits badly with deleting for good.** Restoring something the owner wanted gone is the opposite of a privacy control.
+
+What was lost is direct editing in the app and one-click undo; for one owner, saying it in chat is a small step. What chat cannot do yet is name the exact memory to change or say truthfully what it changed, because the write happens after the reply; phase 12 adds that, through memory tools and the confirmation of phase 7, once phase 6's `search_memory` can find the memory. What it keeps simple is the rule that every write except delete goes through the agent's path, where the filter guards, reconciliation decides and the events explain. The schema still allows a `restored` event, which nothing writes; removing it would need a migration for no gain.
 
 ## Web app
 
-The memory list from phase 4 gains, on the Active tab, an edit and a delete control on each row, on the Deleted tab a restore control, and a history view per memory (a collapsible under the row, loaded on open). Delete asks first and says what it does ("This memory will not be used again. You can restore it from Deleted."). Editing is inline, with the same length limit as a message. Controls are keyboard-reachable, and after an action the list updates in place and the row's new state is announced. Replaced and deleted rows keep their read-only look apart from restore.
+The memory list from phase 4 gains, on each Active and Replaced row, a delete control, and a history view per memory (a collapsible under the row, loaded on open: when it was written and from which message, what replaced it, when it was deleted). Delete asks first and says what it does ("This memory will not be used again."). There is no edit and no restore, and the page says how to correct something: tell the assistant. Controls are keyboard-reachable, and after a delete the list updates in place and the change is announced. Deleted rows stay read-only.
 
-The chat view needs no change: a reply recalled memories by id, and a memory edited or deleted since already shows as "since replaced" or "deleted" (phase 4).
+The chat view needs no change: a reply recalled memories by id, and a memory replaced or deleted since already shows as "since replaced" or "deleted" (phase 4).
 
 ## Eval design
 
@@ -245,8 +257,8 @@ Cases cover each trap in `data/memory_traps.yaml` plus ones too small for an end
 | Similar closeness threshold | A cosine threshold set from the dev cases and recorded here; the second call decides within it |
 | Many facts in one message | All are proposed; at most five writes and three deletes per turn, so one odd message cannot rewrite memory |
 | Dates | The extractor resolves relative dates against the turn's date and the owner's time zone and sets only an event's end (`valid_until`; a day ends at the start of the next one in the owner's zone); it never sets `valid_from`, so nothing it stores is hidden by the phase 2 rule. An event with a past end is not offered as upcoming (phase 2 rule, unchanged). A fact that starts to hold later (a job in January) is stored with its date in the text and is visible now; hiding it until then is a later question |
-| Restore | Only for deleted memories, back to the status they had (`superseded` when something had replaced them); a replaced memory is edited through its current version |
-| Edit | A supersede, with reason "edited by the owner" |
+| Restore | None. A restore can put a memory beside one that contradicts it; the owner says it again and it goes through reconciliation |
+| Edit | None. The owner tells the assistant, which goes through the filter and reconciliation; see "Edit and restore were built and then removed" |
 | Memory off in evals | A constructor option turns off both recall and writes, so the control run changes nothing |
 | `last_used_at` | Not touched by writes; it still means "shown in a prompt" |
 | Language | Memories are stored in the language the owner used; recall is by embedding, so a mixed store still works, and the eval has a non-English case |
@@ -263,7 +275,7 @@ Cases cover each trap in `data/memory_traps.yaml` plus ones too small for an end
 | Duplicates | The near-duplicate trap leaves one active memory, not five |
 | Stale | A stored event whose date has passed is not offered as upcoming |
 | Events | Every write has a `memory_events` row with a reason and the source message |
-| Web app | Edit, delete and restore work from the list by mouse and keyboard; an old reply shows "since replaced" or "deleted" accordingly |
+| Web app | Delete works from the list by mouse and keyboard, and asks first; a memory's history is readable; an old reply shows "since replaced" or "deleted" accordingly |
 | Failure | With the model failing or returning garbage, replies are unchanged and nothing is written |
 | Isolation | Two runs of the agent eval in a row give the same memory at the start of every case |
 | Phase 3 and 4 | The agent eval baseline does not move; `pytest` and `make web-test` pass with no API key and no server |
@@ -275,7 +287,8 @@ Cases cover each trap in `data/memory_traps.yaml` plus ones too small for an end
 - Writes with confirmation: phase 7
 - Summarising old memories or expiring unused ones, and compacting a long chat: phases 8 and later; `last_used_at` is logged and reviewed with data
 - Inferred preferences, memory importance scores and merging many memories into one summary
-- Letting the model call a memory tool (`search_memory`, `remember`): the extraction step writes, and the `a003`-style recall misses are a phase 6 question
+- Letting the model call a memory tool (`search_memory`, `change_memory`, `forget_memory`): the extraction step writes, the owner changes memory by saying so in chat, and the `a003`-style recall misses stay open. The read-only `search_memory` tool is phase 6; changing memory by chat, with confirmation and an honest result, is phase 12 (`DESIGN.md`), built after the tools of phase 6 and the confirmation of phase 7
 - A retry queue for failed extraction, or a write queue shared across several server workers
 - Real-time updates of the memory list while a chat is open
+- Editing a memory or restoring a deleted one in the app: both were built and removed (see above), and erasing the text of a deleted memory for good stays a later question
 - Multi-user: phase 11

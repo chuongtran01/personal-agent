@@ -4,15 +4,16 @@ Nothing is overwritten and nothing is removed: a change adds a row, or moves a r
 status, and the event says what happened, when, why and from which message. The reasons are fixed
 phrases that never quote a memory, so the log cannot keep text that was erased.
 
-The four functions (``add_memory``, ``supersede``, ``delete``, ``restore``) flush and do not commit:
+The three functions (``add_memory``, ``supersede``, ``delete``) flush and do not commit:
 the caller owns the transaction, so an API handler writes one change and commits, and
 ``apply_decisions`` applies a whole turn's decisions and commits once. Rows are read ``FOR UPDATE``
 and checked before anything is written, so a change that is refused leaves nothing behind, and an
 owner's edit cannot race the extraction that follows a chat.
 
 Status moves: ``active`` becomes ``superseded`` (replaced) or ``deleted``; ``superseded`` becomes
-``deleted``; ``deleted`` is restored to what it was, ``active``, or ``superseded`` when something
-replaced it first, because restoring the old fact next to its replacement would revive a stale one.
+``deleted``; ``deleted`` is final. There is no restore: bringing a memory back could put it beside
+a newer one that contradicts it, and anything the owner wants back they say again, which goes
+through reconciliation like every other write.
 """
 
 from collections.abc import Sequence
@@ -171,18 +172,6 @@ async def delete(
         changed.append(memory.id)
     await db.flush()
     return changed
-
-
-async def restore(db: AsyncSession, memory_id: int, *, now: datetime, reason: str) -> str:
-    """Bring a deleted memory back. Returns its new status: ``active``, or ``superseded`` when
-    something had replaced it before it was deleted."""
-    memory = (await _lock(db, [memory_id]))[memory_id]
-    if memory.status != "deleted":
-        raise WrongStatus(f"memory {memory_id} is {memory.status}, not deleted")
-    memory.status = "superseded" if memory.superseded_by is not None else "active"
-    _log(db, memory_id, "restored", reason, None, now)
-    await db.flush()
-    return memory.status
 
 
 async def apply_decisions(

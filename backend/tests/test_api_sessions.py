@@ -533,9 +533,9 @@ async def test_a_bad_memory_query_is_a_422(client, query):
     assert (await client.get(f"/memories?{query}")).status_code == 422
 
 
-async def test_there_is_no_way_to_change_a_memory_here(client, seeded):
+async def test_a_memory_is_not_created_or_changed_through_post_put_or_patch(client, seeded):
     first = (await client.get("/memories?limit=1")).json()[0]["id"]
 
-    for method in ("POST", "PUT", "PATCH", "DELETE"):
+    for method in ("POST", "PUT", "PATCH"):
         response = await client.request(method, f"/memories/{first}", json={})
         assert response.status_code in (404, 405)
