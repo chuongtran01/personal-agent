@@ -12,6 +12,7 @@ test.each([
   "empty_message",
   "turn_in_progress",
   "session_not_found",
+  "memory_not_found",
   "agent_not_configured",
   "bad_stream",
   "connection_lost",

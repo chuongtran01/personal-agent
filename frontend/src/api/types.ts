@@ -51,6 +51,17 @@ export interface Memory {
   last_used_at: string | null;
 }
 
+/** One thing that happened to a memory, from its log: written, replaced or deleted, and why. */
+export interface MemoryHistoryEntry {
+  id: number;
+  event: string;
+  /** a fixed phrase from the server; it never quotes the memory */
+  reason: string;
+  /** the chat message the change came from, or null for the owner's own action in the app */
+  message_id: number | null;
+  created_at: string;
+}
+
 export interface LoginResponse {
   access_token: string;
   token_type: string;

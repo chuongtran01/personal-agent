@@ -1,8 +1,19 @@
 import { describe, expect, test } from "vitest";
 
-import type { Memory } from "@/api/types";
+import type { Memory, MemoryHistoryEntry } from "@/api/types";
 
-import { EMPTY_TEXT, PAGE_SIZE, TABS, filterMemories, formatDay, holds, statusLabel } from "./memory-view";
+import {
+  EMPTY_TEXT,
+  PAGE_SIZE,
+  TABS,
+  applyDeleted,
+  filterMemories,
+  formatDay,
+  historyLine,
+  holds,
+  snippet,
+  statusLabel,
+} from "./memory-view";
 
 const memory = (overrides: Partial<Memory> = {}): Memory => ({
   id: 1,
@@ -105,4 +116,106 @@ test("a superseded memory is called replaced, and the others keep their word", (
   expect(statusLabel("superseded")).toBe("replaced");
   expect(statusLabel("active")).toBe("active");
   expect(statusLabel("deleted")).toBe("deleted");
+});
+
+// Deleting and the history ------------------------------------------------------------------------
+
+describe("applyDeleted", () => {
+  const row = (id: number, status: Memory["status"] = "active"): Memory => ({
+    id,
+    kind: "fact",
+    content: `Memory ${id}.`,
+    status,
+    source_kind: "owner",
+    superseded_by: null,
+    valid_from: null,
+    valid_until: null,
+    created_at: "2026-08-01T00:00:00Z",
+    last_used_at: null,
+  });
+  const gone = (id: number) => row(id, "deleted");
+
+  test("with nothing deleted hands back the very same rows", () => {
+    const rows = [row(1), row(2)];
+
+    for (const tab of ["active", "superseded", "deleted", "all"] as const) {
+      expect(applyDeleted(tab, rows, [])).toBe(rows);
+    }
+  });
+
+  test.each(["active", "superseded"] as const)("the %s tab drops what was deleted", (tab) => {
+    expect(applyDeleted(tab, [row(1), row(2), row(3)], [gone(2)]).map((m) => m.id)).toEqual([1, 3]);
+  });
+
+  test("the All tab keeps it, as deleted", () => {
+    const shown = applyDeleted("all", [row(1), row(2)], [gone(2)]);
+
+    expect(shown.map((m) => [m.id, m.status])).toEqual([
+      [1, "active"],
+      [2, "deleted"],
+    ]);
+  });
+
+  test("the Deleted tab puts the new ones first, newest first, before what the server sent", () => {
+    const shown = applyDeleted("deleted", [gone(9), gone(8)], [gone(3), gone(2)]);
+
+    expect(shown.map((m) => m.id)).toEqual([3, 2, 9, 8]);
+  });
+
+  test("the Deleted tab does not show one twice once the server has it too", () => {
+    const shown = applyDeleted("deleted", [gone(3), gone(8)], [gone(3), gone(2)]);
+
+    expect(shown.map((m) => m.id)).toEqual([2, 3, 8]);
+  });
+
+  test("does not change the rows it was given", () => {
+    const rows = [row(1), row(2)];
+
+    applyDeleted("all", rows, [gone(2)]);
+    applyDeleted("active", rows, [gone(2)]);
+
+    expect(rows.map((m) => m.status)).toEqual(["active", "active"]);
+    expect(rows).toHaveLength(2);
+  });
+});
+
+describe("historyLine", () => {
+  const entry = (overrides: Partial<MemoryHistoryEntry> = {}): MemoryHistoryEntry => ({
+    id: 1,
+    event: "created",
+    reason: "the owner said it",
+    message_id: null,
+    created_at: "2026-08-01T12:00:00Z",
+    ...overrides,
+  });
+
+  test("says what happened, when, and why, with the reason capitalised", () => {
+    expect(historyLine(entry())).toBe("Written Aug 1, 2026 · The owner said it");
+  });
+
+  test.each([
+    ["superseded", "Replaced"],
+    ["deleted", "Deleted"],
+    ["restored", "Restored"],
+  ])("calls a %s event %s", (event, word) => {
+    expect(historyLine(entry({ event }))).toMatch(new RegExp(`^${word} Aug 1, 2026`));
+  });
+
+  test("says when a change came from a chat message, and not when it was the owner's own", () => {
+    expect(historyLine(entry({ message_id: 12 }))).toMatch(/· from a chat message$/);
+    expect(historyLine(entry({ message_id: null }))).not.toMatch(/chat message/);
+  });
+
+  test("keeps an event it has no word for, and copes with a missing reason or date", () => {
+    expect(historyLine(entry({ event: "archived", reason: "" }))).toBe("archived Aug 1, 2026");
+    expect(historyLine(entry({ created_at: "nonsense" }))).toBe("Written · The owner said it");
+  });
+});
+
+describe("snippet", () => {
+  test("keeps short text, flattens white space and cuts long text with an ellipsis", () => {
+    expect(snippet("  Lives   in\nPorto. ")).toBe("Lives in Porto.");
+    expect(snippet("x".repeat(60))).toBe(`${"x".repeat(39)}…`);
+    expect(snippet("x".repeat(40))).toBe("x".repeat(40));
+  });
 });

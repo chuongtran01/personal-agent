@@ -15,6 +15,8 @@ const MESSAGES: Record<string, string> = {
   turn_in_progress: "Still answering the last message. Try again in a moment.",
   session_not_found: "That chat no longer exists.",
   invalid_request: "That chat no longer exists.",
+  // The memory list
+  memory_not_found: "That memory no longer exists. Reload the list.",
   agent_not_configured: "The assistant is not available: the server has no model key.",
 };
 

@@ -25,9 +25,9 @@ No agent framework: the loop, the memory and the rules are written by hand, so e
 
 - **Memory you can search.** Postgres with full-text and pgvector, each memory kept as a row that is never overwritten: a changed fact adds a new row, a replaced one stays as history, a deleted one is never used again.
 - **An agent that uses it.** Before each reply the loop recalls relevant memories (and replaced ones, when asked about the past), puts them in the prompt as labelled data, and streams the answer. It says "I don't know" for what it was never told.
-- **A streaming API** behind a single-owner login (argon2 password hash, signed token): chats, messages as server-sent events, and a read-only memory list.
-- **A web app** built on Next.js, Tailwind and shadcn/ui: login, a chat list and a streaming chat view that shows which memories each reply recalled, and a read-only memory list by status.
-- **An agent that learns** (phase 5, still being finished). After each reply a background step decides what the owner said that is worth keeping and writes it: a stated fact is remembered in the next chat, a changed one replaces the old one, a request to forget stops it being used, and anything that looks like a card number, password or key is filtered out in code before it is written. It works end to end on a real model; the memory list cannot yet delete a memory or show its history, and its evals are not finished, so there are no numbers for it below.
+- **A streaming API** behind a single-owner login (argon2 password hash, signed token): chats, messages as server-sent events, and a memory list with delete and a history for each memory.
+- **A web app** built on Next.js, Tailwind and shadcn/ui: login, a chat list and a streaming chat view that shows which memories each reply recalled, and a memory list by status where a memory can be deleted and its history read.
+- **An agent that learns** (phase 5, still being finished). After each reply a background step decides what the owner said that is worth keeping and writes it: a stated fact is remembered in the next chat, a changed one replaces the old one, a request to forget stops it being used, and anything that looks like a card number, password or key is filtered out in code before it is written. It works end to end on a real model; its evals are not finished, so there are no numbers for it below.
 
 ## How memory is written
 

@@ -20,7 +20,7 @@ Two pieces of earlier phases are completed here. Phase 3 seeds the memory once p
 - [x] **Filter before write**: `backend/app/memory/filter.py`. Card numbers, passwords, PINs and long identifiers are dropped in code whatever the model proposed
 - [x] **Agent integration**: the loop starts extraction after the reply is stored and `done` is sent; a failure there never touches the reply; a constructor option turns it off for the memory-off eval
 - [x] **Memory API**: `DELETE /memories/{id}` and `GET /memories/{id}/events`
-- [ ] **Memory list controls**: delete in the web app, and the history of one memory (when it was written, from which message, what replaced it)
+- [x] **Memory list controls**: delete in the web app, and the history of one memory (when it was written, from which message, what replaced it)
 - [ ] **Eval isolation**: the agent eval restores the seeded memories before every case, without calling the embeddings API again
 - [ ] **Memory eval**: `evals/memory_eval.py` plays the trap cases (sessions, gaps, probe) against the real agent, memory on and off, dev three times and test once
 - [ ] **Tests**: unit tests with a fake model for extraction, reconciliation, the filter, the write functions, the API and the loop. None needs an API key
@@ -216,6 +216,21 @@ What was lost is direct editing in the app and one-click undo; for one owner, sa
 The memory list from phase 4 gains, on each Active and Replaced row, a delete control, and a history view per memory (a collapsible under the row, loaded on open: when it was written and from which message, what replaced it, when it was deleted). Delete asks first and says what it does ("This memory will not be used again."). There is no edit and no restore, and the page says how to correct something: tell the assistant. Controls are keyboard-reachable, and after a delete the list updates in place and the change is announced. Deleted rows stay read-only.
 
 The chat view needs no change: a reply recalled memories by id, and a memory replaced or deleted since already shows as "since replaced" or "deleted" (phase 4).
+
+## Memory list controls, as built
+
+`frontend/src/components/memory-list.tsx`, with `api/memories.ts` (`deleteMemory`, `getMemoryHistory`), `lib/use-memory-history.ts` and `lib/memory-view.ts`.
+
+- **Delete.** A Delete button on each Active and Replaced row, and none on a Deleted one. It opens a question under the row, "This memory will not be used again. It stays listed under Deleted.", with focus on Cancel so Enter cannot delete by accident. Escape or Cancel closes it and gives focus back to Delete; while the request is on its way both buttons are locked and Escape does not abandon it. A failure says so in words (a lost connection, a memory that is already gone, anything else) and keeps the row.
+- **What the owner sees after.** The row leaves the Active or Replaced tab at once, All shows it as deleted, and the Deleted tab shows it at the top straight away, before the server has been asked and without a duplicate once it has (`applyDeleted`, a pure function). A line above the tabs says "Memory deleted. It will not be used again, and is listed under Deleted." It is announced and takes focus, because the row that had focus is gone.
+- **History.** A History button on every row opens what happened to the memory, oldest first, in words: "Written Oct 28, 2026 · The owner said it · from a chat message", "Replaced …", "Deleted Nov 2, 2026 · Deleted by the owner in the app". It is read when opened, kept while the row stays, asked again after a failure, and read afresh after a delete, so it shows the deletion. The text is plain text, whatever the server's reason says.
+- **No edit and no restore, and the page says how to correct one:** "To correct one, tell the assistant, for example 'Actually, I live in Porto now.' You can delete a memory here." A test pins that no button says edit, restore or undo.
+- **Every button is named after its memory** ("Delete: The owner is vegetarian."), so a long list of identical "Delete" buttons can be told apart by a screen reader.
+- **Why the history is read from the click and not from an effect.** The lint rule against setting state in an effect rejected the first version, and a click handler is the more direct place anyway: the owner opens it, so it is read.
+- **Tests:** 59 new, 413 in all, with no server and no key: the two API calls and their errors (including a refused token signing the owner out), the pure helpers, the history hook, and the list (which memories can be deleted, the question, focus, Escape, one request, each tab, failures, the history, plain text, the keyboard alone). About thirty deliberate breaks each failed a test except two that changed nothing a user sees. They also found two faults, both fixed: the Delete button was disabled while its question was open, so Cancel could not give focus back to it and a keyboard user lost their place; and the Escape-during-request test never reached its handler, so it proved nothing.
+- **Checked in a real browser.** On a production build in Chrome against the real API: the list showed Delete and History on each row; History listed the events; the question opened on Cancel; Escape closed it and returned focus to Delete; cancelling deleted nothing; Shift+Tab then Enter deleted by keyboard; the row left the list and focus went to the announcement; the Deleted tab listed it once at the top with no Delete button; its history ended "Deleted … by the owner in the app"; it stayed gone after a reload; and a phone-width page did not scroll sideways. All twelve passed. The screenshots were read as well.
+
+**Left as it is.** The announcement stays until the page is reloaded. A delete is one memory at a time, with no bulk delete. A memory's text stays on file after a delete and is shown under Deleted; erasing it for good is still a later question.
 
 ## Eval design
 
