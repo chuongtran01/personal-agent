@@ -479,139 +479,128 @@ describe("which memories can be deleted", () => {
   });
 });
 
+const dialog = () => screen.getByRole("alertdialog", { name: "Delete this memory?" });
+const noDialog = () => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+const confirmButton = () => screen.getByRole("button", { name: "Delete memory" });
+const cancelButton = () => screen.getByRole("button", { name: "Cancel" });
+
+/** Render the list, wait for a memory, and open the question for it. */
+async function ask(count = 1, which = 1) {
+  serveApi({ pages: { "active:0": many(count) } });
+  const user = userEvent.setup();
+  render(<MemoryList />);
+  await screen.findByText(`Memory number ${count}.`);
+  await user.click(deleteButton(which));
+  return user;
+}
+
 describe("deleting a memory", () => {
-  test("asks first, says what will happen, and sends nothing yet", async () => {
-    serveApi({ pages: { "active:0": [memory(1)] } });
-    const user = userEvent.setup();
-    render(<MemoryList />);
-    await screen.findByText("Memory number 1.");
+  test("asks first in a dialog, says what will happen and which memory, and sends nothing yet", async () => {
+    await ask();
 
-    await user.click(deleteButton(1));
-
-    const group = screen.getByRole("group", {
-      name: "Confirm deleting: Memory number 1.",
-    });
-    expect(group).toHaveTextContent("This memory will not be used again. It stays listed under Deleted.");
+    expect(dialog()).toHaveTextContent("It will not be used again. It stays listed under Deleted.");
+    expect(within(dialog()).getByText("Memory number 1.")).toBeInTheDocument();
     expect(deletes()).toEqual([]);
-    expect(screen.getByText("Memory number 1.")).toBeInTheDocument();
+  });
+
+  test("with several memories the dialog is about the one that was clicked", async () => {
+    await ask(3, 2);
+
+    expect(within(dialog()).getByText("Memory number 2.")).toBeInTheDocument();
+    expect(within(dialog()).queryByText("Memory number 1.")).not.toBeInTheDocument();
+  });
+
+  test("is a modal: the page behind it is out of reach while it is open", async () => {
+    await ask();
+
+    expect(screen.queryByRole("button", { name: "Delete: Memory number 1." })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Active" })).not.toBeInTheDocument();
   });
 
   test("puts focus on Cancel, so Enter cannot delete by accident", async () => {
-    serveApi({ pages: { "active:0": [memory(1)] } });
-    const user = userEvent.setup();
-    render(<MemoryList />);
-    await screen.findByText("Memory number 1.");
+    const user = await ask();
 
-    await user.click(deleteButton(1));
-
-    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(cancelButton()).toHaveFocus();
     await user.keyboard("{Enter}");
+
+    await waitFor(noDialog);
     expect(deletes()).toEqual([]);
-    expect(screen.queryByRole("group")).not.toBeInTheDocument();
   });
 
-  test("Cancel closes the question and gives focus back to Delete", async () => {
-    serveApi({ pages: { "active:0": [memory(1)] } });
-    const user = userEvent.setup();
-    render(<MemoryList />);
-    await screen.findByText("Memory number 1.");
-    await user.click(deleteButton(1));
+  test("Cancel closes the dialog and gives focus back to Delete", async () => {
+    const user = await ask();
 
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(cancelButton());
 
-    expect(screen.queryByRole("group")).not.toBeInTheDocument();
-    expect(deleteButton(1)).toHaveFocus();
-    expect(deleteButton(1)).toBeEnabled();
+    await waitFor(noDialog);
+    await waitFor(() => expect(deleteButton(1)).toHaveFocus());
     expect(deletes()).toEqual([]);
   });
 
   test("Escape does the same as Cancel", async () => {
-    serveApi({ pages: { "active:0": [memory(1)] } });
-    const user = userEvent.setup();
-    render(<MemoryList />);
-    await screen.findByText("Memory number 1.");
-    await user.click(deleteButton(1));
+    const user = await ask();
 
     await user.keyboard("{Escape}");
 
-    expect(screen.queryByRole("group")).not.toBeInTheDocument();
-    expect(deleteButton(1)).toHaveFocus();
-  });
-
-  test("while the question is open, Delete says it is expanded and pressing it again changes nothing", async () => {
-    serveApi({ pages: { "active:0": [memory(1)] } });
-    const user = userEvent.setup();
-    render(<MemoryList />);
-    await screen.findByText("Memory number 1.");
-
-    await user.click(deleteButton(1));
-    expect(deleteButton(1)).toHaveAttribute("aria-expanded", "true");
-    await user.click(deleteButton(1));
-
-    expect(screen.getAllByRole("group")).toHaveLength(1);
+    await waitFor(noDialog);
+    await waitFor(() => expect(deleteButton(1)).toHaveFocus());
     expect(deletes()).toEqual([]);
   });
 
-  test("confirming sends one DELETE for that memory", async () => {
-    serveApi({ pages: { "active:0": [memory(1), memory(2)] } });
-    const user = userEvent.setup();
-    render(<MemoryList />);
-    await screen.findByText("Memory number 2.");
-    await user.click(deleteButton(2));
+  test("clicking Delete again after cancelling asks again", async () => {
+    const user = await ask();
+    await user.click(cancelButton());
+    await waitFor(noDialog);
 
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    await user.click(deleteButton(1));
+
+    expect(dialog()).toBeInTheDocument();
+  });
+
+  test("confirming sends one DELETE for that memory", async () => {
+    const user = await ask(2, 2);
+
+    await user.click(confirmButton());
 
     await waitFor(() => expect(deletes()).toEqual(["/api/memories/2"]));
   });
 
-  test("the row leaves the Active tab at once, and the count follows", async () => {
-    serveApi({ pages: { "active:0": [memory(1), memory(2)] } });
-    const user = userEvent.setup();
-    render(<MemoryList />);
-    await screen.findByText("Memory number 2.");
-    await user.click(deleteButton(1));
+  test("the dialog closes and the row leaves the Active tab at once, and the count follows", async () => {
+    const user = await ask(2, 1);
 
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    await user.click(confirmButton());
 
-    await waitFor(() => expect(screen.queryByText("Memory number 1.")).not.toBeInTheDocument());
+    await waitFor(noDialog);
+    expect(screen.queryByText("Memory number 1.")).not.toBeInTheDocument();
     expect(screen.getByText("Memory number 2.")).toBeInTheDocument();
     expect(screen.getByText("1 loaded")).toBeInTheDocument();
   });
 
   test("says it was deleted, in a message that is announced and has focus", async () => {
-    serveApi({ pages: { "active:0": [memory(1)] } });
-    const user = userEvent.setup();
-    render(<MemoryList />);
-    await screen.findByText("Memory number 1.");
-    await user.click(deleteButton(1));
+    const user = await ask();
 
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    await user.click(confirmButton());
 
     const notice = await screen.findByText(/Memory deleted\./);
     expect(notice).toHaveAttribute("role", "status");
+    await waitFor(() => expect(notice).toHaveFocus());
+    // The dialog gives focus back on its way out, a moment later: it must not take it from the notice
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(notice).toHaveFocus();
     expect(notice).toHaveTextContent("It will not be used again, and is listed under Deleted.");
   });
 
   test("the last memory deleted leaves the empty message, not a blank page", async () => {
-    serveApi({ pages: { "active:0": [memory(1)] } });
-    const user = userEvent.setup();
-    render(<MemoryList />);
-    await screen.findByText("Memory number 1.");
-    await user.click(deleteButton(1));
+    const user = await ask();
 
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    await user.click(confirmButton());
 
     expect(await screen.findByText("No active memories yet.")).toBeInTheDocument();
   });
 
   test("shows at the top of the Deleted tab straight away, before the server has been asked", async () => {
-    serveApi({ pages: { "active:0": [memory(1)] } });
-    const user = userEvent.setup();
-    render(<MemoryList />);
-    await screen.findByText("Memory number 1.");
-    await user.click(deleteButton(1));
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    const user = await ask();
+    await user.click(confirmButton());
     await screen.findByText(/Memory deleted\./);
     fetchMock.mockImplementation(() => new Promise<Response>(() => {})); // the server never answers
 
@@ -633,7 +622,7 @@ describe("deleting a memory", () => {
     render(<MemoryList />);
     await screen.findByText("Memory number 1.");
     await user.click(deleteButton(1));
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    await user.click(confirmButton());
     await screen.findByText(/Memory deleted\./);
 
     await user.click(tab("Deleted"));
@@ -643,15 +632,11 @@ describe("deleting a memory", () => {
   });
 
   test("the newest deletion is first on the Deleted tab", async () => {
-    serveApi({ pages: { "active:0": [memory(1), memory(2)] } });
-    const user = userEvent.setup();
-    render(<MemoryList />);
-    await screen.findByText("Memory number 2.");
-    await user.click(deleteButton(1));
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    const user = await ask(2, 1);
+    await user.click(confirmButton());
     await waitFor(() => expect(screen.queryByText("Memory number 1.")).not.toBeInTheDocument());
     await user.click(deleteButton(2));
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    await user.click(confirmButton());
     await screen.findByText("No active memories yet.");
 
     await user.click(tab("Deleted"));
@@ -662,21 +647,15 @@ describe("deleting a memory", () => {
   });
 
   test("on the All tab the row stays, now marked deleted and with no Delete button", async () => {
-    serveApi({
-      pages: { "active:0": [memory(1)], "all:0": [memory(1), memory(2)] },
-    });
+    serveApi({ pages: { "active:0": [memory(1)], "all:0": [memory(1), memory(2)] } });
     const user = userEvent.setup();
     render(<MemoryList />);
     await screen.findByText("Memory number 1.");
     await user.click(tab("All"));
     await screen.findAllByText("Memory number 2.");
     const activePanel = screen.getByRole("tabpanel", { name: "Active" });
-    await user.click(
-      within(activePanel).getByRole("button", {
-        name: "Delete: Memory number 1.",
-      }),
-    );
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    await user.click(within(activePanel).getByRole("button", { name: "Delete: Memory number 1." }));
+    await user.click(confirmButton());
     await screen.findByText(/Memory deleted\./);
 
     const allPanel = screen.getByRole("tabpanel", { name: "All" });
@@ -684,32 +663,24 @@ describe("deleting a memory", () => {
 
     expect(within(row).getByText("deleted")).toBeInTheDocument();
     expect(within(row).queryByRole("button", { name: /^Delete: / })).not.toBeInTheDocument();
-    expect(
-      within(allPanel).getByRole("button", {
-        name: "Delete: Memory number 2.",
-      }),
-    ).toBeInTheDocument();
+    expect(within(allPanel).getByRole("button", { name: "Delete: Memory number 2." })).toBeInTheDocument();
   });
 
   test("a replaced memory can be deleted, and then leaves the Replaced tab", async () => {
-    serveApi({
-      pages: {
-        "superseded:0": [memory(2, { status: "superseded", superseded_by: 3 })],
-      },
-    });
+    serveApi({ pages: { "superseded:0": [memory(2, { status: "superseded", superseded_by: 3 })] } });
     const user = userEvent.setup();
     render(<MemoryList />);
     await user.click(tab("Replaced"));
     await screen.findByText("Memory number 2.");
     await user.click(deleteButton(2));
 
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    await user.click(confirmButton());
 
     expect(await screen.findByText("Nothing has been replaced yet.")).toBeInTheDocument();
     expect(deletes()).toEqual(["/api/memories/2"]);
   });
 
-  test("while it is on its way the buttons are locked, and a second click sends nothing more", async () => {
+  test("while it is on its way the buttons are locked, Escape does not abandon it, and nothing is sent twice", async () => {
     let answer: (response: Response) => void = () => {};
     serveApi({
       pages: { "active:0": [memory(1)] },
@@ -720,20 +691,21 @@ describe("deleting a memory", () => {
     await screen.findByText("Memory number 1.");
     await user.click(deleteButton(1));
 
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    await user.click(confirmButton());
 
     const working = await screen.findByRole("button", { name: "Deleting…" });
     expect(working).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-    fireEvent.keyDown(screen.getByRole("group"), { key: "Escape" });
-    expect(screen.getByRole("group")).toBeInTheDocument(); // Escape does not abandon a request in flight
+    expect(cancelButton()).toBeDisabled();
+    fireEvent.keyDown(dialog(), { key: "Escape" });
+    expect(dialog()).toBeInTheDocument(); // Escape does not abandon a request in flight
     expect(deletes()).toHaveLength(1);
     answer(new Response(null, { status: 204 }));
-    await waitFor(() => expect(screen.queryByText("Memory number 1.")).not.toBeInTheDocument());
+    await waitFor(noDialog);
+    expect(screen.queryByText("Memory number 1.")).not.toBeInTheDocument();
     expect(deletes()).toHaveLength(1);
   });
 
-  test("a failure says so, keeps the memory, and leaves the owner able to try again or cancel", async () => {
+  test("a failure says so inside the dialog, keeps the memory, and lets the owner try again", async () => {
     let fail = true;
     serveApi({
       pages: { "active:0": [memory(1)] },
@@ -744,33 +716,34 @@ describe("deleting a memory", () => {
     await screen.findByText("Memory number 1.");
     await user.click(deleteButton(1));
 
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    await user.click(confirmButton());
 
-    expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
-    expect(screen.getByText("Memory number 1.")).toBeInTheDocument();
+    expect(await within(dialog()).findByText("Something went wrong. Please try again.")).toBeInTheDocument();
+    expect(screen.getAllByText("Memory number 1.")).toHaveLength(2); // the row and the dialog
     expect(screen.queryByText(/Memory deleted\./)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Delete memory" })).toBeEnabled();
+    expect(confirmButton()).toBeEnabled();
+    expect(cancelButton()).toBeEnabled();
     fail = false;
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
-    await waitFor(() => expect(screen.queryByText("Memory number 1.")).not.toBeInTheDocument());
+    await user.click(confirmButton());
+    await waitFor(noDialog);
+    expect(screen.queryByText("Memory number 1.")).not.toBeInTheDocument();
   });
 
   test("a memory that is already gone says so", async () => {
     serveApi({
       pages: { "active:0": [memory(1)] },
-      onDelete: () =>
-        reply(404, {
-          detail: { code: "memory_not_found", message: "no memory 1" },
-        }),
+      onDelete: () => reply(404, { detail: { code: "memory_not_found", message: "no memory 1" } }),
     });
     const user = userEvent.setup();
     render(<MemoryList />);
     await screen.findByText("Memory number 1.");
     await user.click(deleteButton(1));
 
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    await user.click(confirmButton());
 
-    expect(await screen.findByText("That memory no longer exists. Reload the list.")).toBeInTheDocument();
+    expect(
+      await within(dialog()).findByText("That memory no longer exists. Reload the list."),
+    ).toBeInTheDocument();
   });
 
   test("a lost connection says so", async () => {
@@ -783,26 +756,26 @@ describe("deleting a memory", () => {
     await screen.findByText("Memory number 1.");
     await user.click(deleteButton(1));
 
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
+    await user.click(confirmButton());
 
-    expect(await screen.findByText("Cannot reach the server.")).toBeInTheDocument();
+    expect(await within(dialog()).findByText("Cannot reach the server.")).toBeInTheDocument();
   });
 
-  test("cancelling after a failure clears the message", async () => {
-    serveApi({
-      pages: { "active:0": [memory(1)] },
-      onDelete: () => reply(500, "boom"),
-    });
+  test("cancelling after a failure clears the message, so the next question starts clean", async () => {
+    serveApi({ pages: { "active:0": [memory(1)] }, onDelete: () => reply(500, "boom") });
     const user = userEvent.setup();
     render(<MemoryList />);
     await screen.findByText("Memory number 1.");
     await user.click(deleteButton(1));
-    await user.click(screen.getByRole("button", { name: "Delete memory" }));
-    await screen.findByText("Something went wrong. Please try again.");
+    await user.click(confirmButton());
+    await within(dialog()).findByText("Something went wrong. Please try again.");
 
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(cancelButton());
+    await waitFor(noDialog);
+    await user.click(deleteButton(1));
 
-    expect(screen.queryByText("Something went wrong. Please try again.")).not.toBeInTheDocument();
+    expect(dialog()).toBeInTheDocument();
+    expect(within(dialog()).queryByText("Something went wrong. Please try again.")).not.toBeInTheDocument();
   });
 
   test("the whole flow works with the keyboard alone", async () => {
@@ -812,10 +785,10 @@ describe("deleting a memory", () => {
     await screen.findByText("Memory number 1.");
 
     deleteButton(1).focus();
-    await user.keyboard("{Enter}"); // opens the question, and focus lands on Cancel
-    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
-    await user.tab({ shift: true });
-    expect(screen.getByRole("button", { name: "Delete memory" })).toHaveFocus();
+    await user.keyboard("{Enter}"); // opens the dialog, and focus lands on Cancel
+    expect(cancelButton()).toHaveFocus();
+    await user.tab(); // focus stays inside the dialog: from Cancel to Delete memory
+    expect(confirmButton()).toHaveFocus();
     await user.keyboard("{Enter}");
 
     await screen.findByText(/Memory deleted\./);

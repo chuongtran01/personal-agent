@@ -6,6 +6,17 @@ import { ApiError } from "@/api/http";
 import { deleteMemory } from "@/api/memories";
 import type { Memory } from "@/api/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -78,10 +89,9 @@ function HistoryList({ log }: { log: MemoryHistory }) {
 
 function Row({ memory, onDeleted }: { memory: Memory; onDeleted: (memory: Memory) => void }) {
   const [history, setHistory] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  const [asking, setAsking] = useState(false); // the confirmation dialog is open
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const deleteButton = useRef<HTMLButtonElement>(null);
   const log = useMemoryHistory(memory.id);
   const name = snippet(memory.content);
 
@@ -90,10 +100,11 @@ function Row({ memory, onDeleted }: { memory: Memory; onDeleted: (memory: Memory
     if (open && log.entries === null) log.load();
   }
 
-  function cancel() {
-    setConfirming(false);
-    setError(null);
-    deleteButton.current?.focus();
+  // A request on its way cannot be abandoned with Escape or by closing the dialog
+  function changeAsking(open: boolean) {
+    if (busy) return;
+    setAsking(open);
+    if (!open) setError(null);
   }
 
   async function confirmDelete() {
@@ -102,7 +113,7 @@ function Row({ memory, onDeleted }: { memory: Memory; onDeleted: (memory: Memory
     try {
       await deleteMemory(memory.id);
       setBusy(false);
-      setConfirming(false);
+      setAsking(false);
       setHistory(false);
       log.reset(); // it has a new line now, "Deleted"
       onDeleted({ ...memory, status: "deleted" });
@@ -137,43 +148,48 @@ function Row({ memory, onDeleted }: { memory: Memory; onDeleted: (memory: Memory
             </Button>
           </CollapsibleTrigger>
           {memory.status !== "deleted" && (
-            <Button
-              ref={deleteButton}
-              size="sm"
-              variant="ghost"
-              aria-label={`Delete: ${name}`}
-              aria-expanded={confirming}
-              onClick={() => setConfirming(true)}
-            >
-              Delete
-            </Button>
+            <AlertDialog open={asking} onOpenChange={changeAsking}>
+              <AlertDialogTrigger asChild>
+                <Button size="sm" variant="ghost" aria-label={`Delete: ${name}`}>
+                  Delete
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete this memory?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    It will not be used again. It stays listed under Deleted.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <blockquote className="rounded-md border bg-muted/40 p-2 text-sm break-words">
+                  {memory.content}
+                </blockquote>
+                {error && (
+                  <Alert variant="destructive">
+                    <AlertDescription>{messageFor(error)}</AlertDescription>
+                  </Alert>
+                )}
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    disabled={busy}
+                    onClick={(event) => {
+                      event.preventDefault(); // stay open until the server has answered
+                      void confirmDelete();
+                    }}
+                  >
+                    {busy ? "Deleting…" : "Delete memory"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           )}
         </div>
         <CollapsibleContent>
           <HistoryList log={log} />
         </CollapsibleContent>
       </Collapsible>
-      {confirming && (
-        <div
-          role="group"
-          aria-label={`Confirm deleting: ${name}`}
-          onKeyDown={(event) => event.key === "Escape" && !busy && cancel()}
-          className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 p-2 text-sm"
-        >
-          <span>This memory will not be used again. It stays listed under Deleted.</span>
-          <Button size="sm" variant="destructive" onClick={() => void confirmDelete()} disabled={busy}>
-            {busy ? "Deleting…" : "Delete memory"}
-          </Button>
-          <Button size="sm" variant="outline" onClick={cancel} disabled={busy} autoFocus>
-            Cancel
-          </Button>
-        </div>
-      )}
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{messageFor(error)}</AlertDescription>
-        </Alert>
-      )}
     </li>
   );
 }
