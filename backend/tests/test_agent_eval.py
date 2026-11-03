@@ -12,7 +12,7 @@ from app.agent.llm import LLMError
 from app.agent.loop import AgentLoop
 from app.agent.messages import UserMessage
 from app.memory.seed import load_seed, seed
-from app.models import ChatMessage
+from app.models import ChatMessage, Memory
 
 SEED = {m.key: m for m in load_seed()}
 
@@ -278,3 +278,245 @@ def test_the_results_file_can_hold_a_run():
     from dataclasses import asdict
 
     assert json.dumps(asdict(make("a1")))
+
+
+# Cases that can write memory ----------------------------------------------------------------------
+
+
+def writer_for(session_factory, *answers):
+    from scripted_llm import ScriptedStructured
+    from word_embedder import WordEmbedder
+
+    from app.memory.writer import MemoryWriter
+
+    return MemoryWriter(
+        session_factory, ScriptedStructured(*answers), WordEmbedder(), timezone="UTC"
+    )
+
+
+def learns(*contents):
+    """What the extractor answers: each content proposed as a new fact."""
+    from scripted_llm import answer
+
+    return answer(
+        {
+            "proposals": [
+                {"op": "add", "kind": "fact", "content": c, "valid_until": None} for c in contents
+            ]
+        }
+    )
+
+
+async def learning_loop(session_factory, llm_scripts, *answers):
+    writer = writer_for(session_factory, *answers)
+    loop = AgentLoop(
+        session_factory,
+        ScriptedLLM(*llm_scripts),
+        FakeEmbedder(),
+        clock=lambda: EVAL_NOW,
+        recall_mode="keyword",
+        retry_delay=0,
+        memory_writer=writer,
+    )
+    return loop, writer
+
+
+async def taken(session_factory):
+    from app.memory.seed import snapshot
+
+    async with session_factory() as db:
+        return await snapshot(db)
+
+
+async def memory_count(session_factory):
+    async with session_factory() as db:
+        return (await db.execute(select(func.count()).select_from(Memory))).scalar_one()
+
+
+def describe(saved, rows, world):
+    from agent_eval import describe_changes
+
+    return describe_changes(saved, rows, world)
+
+
+async def test_what_a_case_wrote_is_recorded_and_the_next_case_starts_clean(session_factory, world):
+    saved = await taken(session_factory)
+    loop, writer = await learning_loop(
+        session_factory,
+        [reply("Noted."), reply("You live in Porto.")],
+        learns("The owner has a cat called Miso."),
+        learns(),
+    )
+
+    first = await run_case(
+        loop, session_factory, case(message="I have a cat called Miso."), 1, SEED, world, saved
+    )
+    wrote_then = await memory_count(session_factory)
+    second = await run_case(loop, session_factory, case(), 2, SEED, world, saved)
+
+    assert first.written == ("added: The owner has a cat called Miso. [active]",)
+    assert wrote_then == 43
+    assert second.written == () and await memory_count(session_factory) == 42
+    await writer.close()
+
+
+async def test_a_case_starts_from_the_snapshot_even_if_something_else_changed_memory(
+    session_factory, world
+):
+    saved = await taken(session_factory)
+    async with session_factory() as db:
+        db.add(Memory(kind="fact", content="a stray memory", status="active"))
+        await db.commit()
+    loop, writer = await learning_loop(session_factory, [reply("ok")], learns())
+
+    run = await run_case(loop, session_factory, case(message="hello"), 1, SEED, world, saved)
+
+    assert await memory_count(session_factory) == 42 and run.written == ()
+    await writer.close()
+
+
+async def test_each_turn_waits_for_its_memory_write_so_the_next_message_can_use_it(
+    session_factory, world
+):
+    saved = await taken(session_factory)
+    loop, writer = await learning_loop(
+        session_factory,
+        [reply("Noted."), reply("A cat called Miso.")],
+        learns("The owner has a cat called Miso."),
+    )
+    c = case(
+        prior_turns=["I have a cat called Miso."],
+        message="What is my cat called?",
+        category="follow_up",
+        must_recall=[],
+        must_not_recall=[],
+        must_include=[["Miso"]],
+        must_not_include=[],
+    )
+
+    run = await run_case(loop, session_factory, c, 1, SEED, world, saved)
+
+    assert run.passed
+    assert (
+        "The owner has a cat called Miso." in loop._llm.calls[1].system
+    )  # the second turn recalled it
+    await writer.close()
+
+
+async def test_the_last_write_has_finished_before_the_case_returns(session_factory, world):
+    saved = await taken(session_factory)
+    loop, writer = await learning_loop(
+        session_factory, [reply("Noted.")], learns("The owner has a cat.")
+    )
+
+    await run_case(loop, session_factory, case(message="I have a cat."), 1, SEED, world, saved)
+
+    assert await memory_count(session_factory) == 43  # not 42 with the write still queued
+    await writer.close()
+
+
+async def test_without_a_snapshot_nothing_is_restored_or_recorded(session_factory, world):
+    async with session_factory() as db:
+        db.add(Memory(kind="fact", content="kept", status="active"))
+        await db.commit()
+
+    run, _ = await play(session_factory, world, case(), reply("You live in Porto."))
+
+    assert run.written == () and await memory_count(session_factory) == 43
+
+
+async def test_a_memory_the_agent_wrote_and_recalled_in_the_same_case_is_not_a_leak(
+    session_factory, world
+):
+    saved = await taken(session_factory)
+    loop, writer = await learning_loop(
+        session_factory,
+        [reply("Noted."), reply("A cat called Miso.")],
+        learns("The owner has a cat called Miso."),
+    )
+    c = case(
+        prior_turns=["I have a cat called Miso."],
+        message="What is my cat called?",
+        category="follow_up",
+        must_recall=[],
+        must_not_recall=[],
+        must_include=[],
+        must_not_include=["Bruno"],
+    )
+
+    run = await run_case(loop, session_factory, c, 1, SEED, world, saved)
+
+    assert any(key.startswith("id:") for key in run.recalled) and run.leaks == ()
+    await writer.close()
+
+
+# What changed, in words ---------------------------------------------------------------------------
+
+
+async def test_changes_name_new_rows_and_what_happened_to_seeded_ones(session_factory, world):
+    saved = await taken(session_factory)
+    home, other = world_ids(world, "home-city", "manager")
+    rows = [
+        (memory_id, content, status)
+        for memory_id, content, status in await current_rows(session_factory)
+        if memory_id != other
+    ]
+    rows = [(i, c, "superseded" if i == home else s) for i, c, s in rows]
+    rows.append((9001, "The owner has a cat.", "active"))
+
+    lines = describe(saved, rows, world)
+
+    assert lines == (
+        "added: The owner has a cat. [active]",
+        "superseded: home-city (was active)",
+        "removed: manager",
+    )
+
+
+async def test_nothing_changed_is_nothing_to_report(session_factory, world):
+    saved = await taken(session_factory)
+
+    assert describe(saved, await current_rows(session_factory), world) == ()
+
+
+async def current_rows(session_factory):
+    async with session_factory() as db:
+        found = await db.execute(select(Memory.id, Memory.content, Memory.status))
+        return [tuple(row) for row in found.all()]
+
+
+def world_ids(world, *keys):
+    by_key = {key: memory_id for memory_id, key in world.items()}
+    return [by_key[key] for key in keys]
+
+
+# The options ---------------------------------------------------------------------------------------
+
+
+def test_writes_need_one_case_at_a_time():
+    from agent_eval import check_options
+    from memory_retrieval_eval import EvalError
+
+    check_options(True, 1)
+    check_options(False, 8)
+    with pytest.raises(EvalError, match="--concurrency 1"):
+        check_options(True, 2)
+
+
+def test_the_summary_counts_what_was_written_and_the_report_shows_it_only_then(capsys):
+    from agent_eval import print_report
+
+    runs = [
+        make("a1", written=("added: a [active]", "deleted: x (was active)")),
+        make("a2"),
+        make("a3", written=("added: b [active]",)),
+    ]
+
+    summary = summarize(runs)
+    print_report({"on": summary}, None)
+    with_writes = capsys.readouterr().out
+    print_report({"on": summarize([make("a4")])}, None)
+    without = capsys.readouterr().out
+
+    assert summary["written"] == 3 and "memory changes" in with_writes
+    assert "memory changes" not in without

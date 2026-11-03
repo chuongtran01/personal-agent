@@ -5,13 +5,18 @@
 The file is ``data/seed_memories.yaml``. A memory already in the table (same content) is left
 alone, so a second run writes nothing and embeds nothing; ``--reset`` empties the memory tables
 first. The loader returns each memory's id by key, which is how the eval names them.
+
+``snapshot`` and ``restore`` are for an eval whose cases can write memories: take a snapshot of the
+seeded rows once (embeddings included), and put them back before every case with plain inserts, so
+the embeddings API is not called again and every case starts from the same memory.
 """
 
 import argparse
 import asyncio
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
@@ -114,6 +119,67 @@ async def seed(
 
 async def reset(session: AsyncSession) -> None:
     await session.execute(text("TRUNCATE memory_events, memories RESTART IDENTITY CASCADE"))
+    await session.commit()
+
+
+_MEMORY_COLUMNS = (
+    "id",
+    "kind",
+    "content",
+    "embedding",
+    "source_message_id",
+    "source_kind",
+    "status",
+    "superseded_by",
+    "valid_from",
+    "valid_until",
+    "created_at",
+    "last_used_at",
+)  # every column but ``tsv``, which the database computes from the content
+_EVENT_COLUMNS = ("id", "memory_id", "event", "reason", "message_id", "created_at")
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    """The memory tables as they were: every row, with its id, embedding and log."""
+
+    memories: tuple[dict[str, Any], ...]
+    events: tuple[dict[str, Any], ...]
+
+
+def _as_dicts(rows, columns: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
+    return tuple({name: getattr(row, name) for name in columns} for row in rows)
+
+
+async def snapshot(session: AsyncSession) -> Snapshot:
+    memories = (await session.execute(select(Memory).order_by(Memory.id))).scalars().all()
+    events = (await session.execute(select(MemoryEvent).order_by(MemoryEvent.id))).scalars().all()
+    return Snapshot(_as_dicts(memories, _MEMORY_COLUMNS), _as_dicts(events, _EVENT_COLUMNS))
+
+
+async def restore(session: AsyncSession, saved: Snapshot) -> None:
+    """Make the memory tables exactly what the snapshot was, ids included, and commit.
+
+    Whatever was added, replaced or deleted since is undone. Rows go back with their own ids, so a
+    key kept by id still names the same memory, and the id counters continue after the largest."""
+    await session.execute(text("TRUNCATE memory_events, memories RESTART IDENTITY CASCADE"))
+    # A replaced memory points at its replacement, which may come later, so the links go on last
+    links = {row["id"]: row["superseded_by"] for row in saved.memories if row["superseded_by"]}
+    session.add_all(Memory(**{**row, "superseded_by": None}) for row in saved.memories)
+    await session.flush()
+    for memory_id, replacement in links.items():
+        await session.execute(
+            text("UPDATE memories SET superseded_by = :replacement WHERE id = :id"),
+            {"replacement": replacement, "id": memory_id},
+        )
+    session.add_all(MemoryEvent(**row) for row in saved.events)
+    await session.flush()
+    for table, rows in (("memories", saved.memories), ("memory_events", saved.events)):
+        if rows:
+            await session.execute(
+                text("SELECT setval(pg_get_serial_sequence(:table, 'id'), :last)"),
+                {"table": table, "last": max(row["id"] for row in rows)},
+            )
     await session.commit()
 
 

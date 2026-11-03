@@ -76,13 +76,21 @@ def leaked(
 
     The current block holds only what search may return by default. The history block holds only
     replaced memories and ended events, so anything else there (deleted, external, not started,
-    or simply current) is out of place."""
+    or simply current) is out of place.
+
+    A key that starts with ``id:`` is a memory the agent wrote during the case, not a seed memory,
+    so there is no seed row to judge it by; the write path's own checks cover it. Any other key the
+    seed does not know is still a leak."""
     out = []
     for key in current:
+        if key.startswith("id:"):
+            continue
         memory = seed.get(key)
         if memory is None or why_not_returnable(memory, DEFAULT_FLAGS) is not None:
             out.append(key)
     for key in past:
+        if key.startswith("id:"):
+            continue
         memory = seed.get(key)
         if memory is None or not is_past(memory):
             out.append(key)

@@ -40,7 +40,7 @@ eval-memory:
 eval-memory-retrieval:
 	cd backend && .venv/bin/python ../evals/memory_retrieval_eval.py $(ARGS)
 
-# Agent eval: real loop, real model, needs OPENAI_API_KEY. ARGS="--split test" or "--memory both --repeat 3"
+# Agent eval: real loop, real model, needs OPENAI_API_KEY. ARGS="--split test", "--memory both --repeat 3" or "--writes on"
 eval-agent:
 	cd backend && .venv/bin/python ../evals/agent_eval.py $(ARGS)
 

@@ -178,8 +178,19 @@ def test_a_memory_the_case_forbids_is_a_leak_in_either_block():
     assert in_past.leaks == ("home-city-old",)
 
 
-def test_a_memory_id_that_is_not_in_the_seed_is_a_leak():
-    assert leaked(SEED, ["id:9999"], []) == ["id:9999"]
+def test_a_memory_the_agent_wrote_during_the_case_is_not_judged_by_the_seed():
+    # "id:N" is how the runner names a recalled memory that is not a seed row: one the agent wrote
+    assert leaked(SEED, ["id:9999"], ["id:9998"]) == []
+
+
+def test_a_key_the_seed_does_not_know_is_still_a_leak():
+    assert leaked(SEED, ["no-such-key"], ["another"]) == ["no-such-key", "another"]
+
+
+def test_a_written_memory_beside_a_real_leak_does_not_hide_it():
+    leak = next(k for k, m in SEED.items() if m.status == "deleted")
+
+    assert leaked(SEED, ["id:9999", leak], []) == [leak]
 
 
 # Errors ------------------------------------------------------------------------------------

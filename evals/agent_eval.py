@@ -3,6 +3,7 @@
 Run from ``backend/`` (``make eval-agent``):
 
     python ../evals/agent_eval.py [--split dev|test] [--memory on|off|both] [--repeat N]
+        [--writes on|off]
 
 The dev split is the one to tune against, read three times (``--repeat 3``); the test split is
 held out and read once. The runner uses its own database, ``agent_eval``, emptied and re-seeded on
@@ -16,6 +17,12 @@ two and prints them side by side.
 
 The gate is zero leaks: no memory that may not be used reaches a prompt, in any run. A run with a
 leak exits with status 1.
+
+``--writes on`` lets the memory-on arm learn: after each turn the agent's memory writer extracts,
+reconciles and writes, and the runner waits for it. A case can then change memory, so the seeded
+rows are snapshotted once (embeddings included) and put back before every case with plain inserts,
+which calls no API; cases run one at a time; and what each case changed is recorded. The default
+is off, which is the phase 3 baseline.
 """
 
 import argparse
@@ -32,7 +39,7 @@ from agent_cases import AgentCase, load_all
 from agent_checks import check_case
 from memory_cases import EVAL_NOW, InvalidDataset
 from memory_retrieval_eval import MODES, EvalError, prepare_database
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.agent import store
@@ -41,7 +48,9 @@ from app.agent.loop import AgentDone, AgentLoop, MemoryRecalled, TurnError, Turn
 from app.agent.openai_client import OpenAIClient
 from app.config import settings
 from app.memory.embeddings import OpenAIEmbedder
-from app.memory.seed import SeedMemory, load_seed, reset, seed
+from app.memory.seed import SeedMemory, Snapshot, load_seed, reset, restore, seed, snapshot
+from app.memory.writer import MemoryWriter
+from app.models import Memory
 
 ROOT = Path(__file__).resolve().parent
 RESULTS = ROOT / "results"
@@ -68,6 +77,8 @@ class CaseRun:
     steps: int
     recall_seconds: float
     total_seconds: float
+    # What the agent changed in memory during the case (only with --writes on)
+    written: tuple[str, ...] = ()
 
 
 @dataclass
@@ -104,6 +115,29 @@ async def play(loop: AgentLoop, session_id, text: str, key_of: dict[int, str]):
     return turned
 
 
+def describe_changes(
+    saved: Snapshot, rows: list[tuple[int, str, str]], key_of: dict[int, str]
+) -> tuple[str, ...]:
+    """What differs between the memory table now (``(id, content, status)``) and the snapshot.
+
+    A new row is "added", a seeded memory that is now replaced or deleted is named by its seed key,
+    and a seeded memory that is gone altogether is "removed"."""
+    before = {row["id"]: row["status"] for row in saved.memories}
+    now = {memory_id: (content, status) for memory_id, content, status in rows}
+    lines = [
+        f"added: {content} [{status}]"
+        for memory_id, (content, status) in sorted(now.items())
+        if memory_id not in before
+    ]
+    for memory_id, status in sorted(before.items()):
+        name = key_of.get(memory_id, f"id:{memory_id}")
+        if memory_id not in now:
+            lines.append(f"removed: {name}")
+        elif now[memory_id][1] != status:
+            lines.append(f"{now[memory_id][1]}: {name} (was {status})")
+    return tuple(lines)
+
+
 async def run_case(
     loop: AgentLoop,
     session_factory,
@@ -111,17 +145,38 @@ async def run_case(
     run: int,
     seed_memories: dict[str, SeedMemory],
     key_of: dict[int, str],
+    saved: Snapshot | None = None,
 ) -> CaseRun:
-    """Play the earlier turns and the judged message in a fresh chat, then check the last answer."""
+    """Play the earlier turns and the judged message in a fresh chat, then check the last answer.
+
+    With a snapshot, memory is put back to it before the case, and what the agent changed during it
+    is recorded: a case that can write must start from the same memory as every other. Each turn
+    waits for the memory write it queued, so the next message sees it and the next case does not
+    meet a write in flight."""
+    if saved is not None:
+        async with session_factory() as db:
+            await restore(db, saved)
     async with session_factory() as db:
         session_id = await store.create_session(db)
+
+    async def say(text_: str) -> Turned:
+        played = await play(loop, session_id, text_, key_of)
+        if loop.memory_writer is not None:
+            await loop.memory_writer.drain()
+        return played
+
     turned = Turned()
     for earlier in case.prior_turns:
-        turned = await play(loop, session_id, earlier, key_of)
+        turned = await say(earlier)
         if turned.error:
             break
     if not turned.error:
-        turned = await play(loop, session_id, case.message, key_of)
+        turned = await say(case.message)
+    written: tuple[str, ...] = ()
+    if saved is not None:
+        async with session_factory() as db:
+            rows = (await db.execute(select(Memory.id, Memory.content, Memory.status))).all()
+        written = describe_changes(saved, [tuple(row) for row in rows], key_of)
 
     verdict = check_case(
         case, seed_memories, turned.current, turned.past, turned.answer, turned.error
@@ -145,6 +200,7 @@ async def run_case(
         steps=done.steps if done else 0,
         recall_seconds=done.recall_seconds if done else 0.0,
         total_seconds=done.total_seconds if done else 0.0,
+        written=written,
     )
 
 
@@ -174,6 +230,7 @@ def summarize(runs: list[CaseRun], price_in: float = 0.0, price_out: float = 0.0
         "passed": sum(r.passed for r in runs),
         "errors": sum(1 for r in runs if r.error),
         "leaks": sum(len(r.leaks) for r in runs),
+        "written": sum(len(r.written) for r in runs),
         "by_category": {
             c: _rate([r for r in runs if r.category == c])
             for c in sorted({r.category for r in runs})
@@ -217,6 +274,8 @@ def print_report(summaries: dict[str, dict], effect: dict | None) -> None:
     row("passed", lambda s: f"{s['passed']}/{s['runs']}")
     row("leaks", lambda s: s["leaks"])
     row("turn errors", lambda s: s["errors"])
+    if any(s["written"] for s in summaries.values()):
+        row("memory changes", lambda s: s["written"])
     row(
         "required recalled",
         lambda s: f"{s['recall']['all_required_recalled']}/{s['recall']['runs']}",
@@ -256,6 +315,14 @@ def print_failures(runs: list[CaseRun]) -> None:
             shown.add(r.id)
             print(f"  {r.id} [{r.category}] {', '.join(r.failures)}")
             print(f"      answer: {r.answer[:160]!r}")
+            for change in r.written:
+                print(f"      memory: {change}")
+
+
+def check_options(writes: bool, concurrency: int) -> None:
+    """Cases that can write share one database and restore it before each case, so they run alone."""
+    if writes and concurrency != 1:
+        raise EvalError("--writes on needs --concurrency 1: every case restores the shared memory")
 
 
 async def main(
@@ -267,7 +334,9 @@ async def main(
     only: list[str],
     price_in: float,
     price_out: float,
+    writes: bool = False,
 ) -> int:
+    check_options(writes, concurrency)
     cases = load_all()[split]
     if only:
         unknown = set(only) - {c.id for c in cases}
@@ -280,7 +349,8 @@ async def main(
     by_key = {m.key: m for m in seed_memories}
     print(
         f"{split} split: {len(cases)} cases x {repeat} run(s), memory "
-        f"{'/'.join('on' if a else 'off' for a in arms)}, model {settings.agent_model}"
+        f"{'/'.join('on' if a else 'off' for a in arms)}, writes {'on' if writes else 'off'}, "
+        f"model {settings.agent_model}"
     )
     eval_url = prepare_database()
     engine = create_async_engine(eval_url)
@@ -292,8 +362,18 @@ async def main(
             await db.commit()
             embedder = OpenAIEmbedder()
             ids = await seed(db, embedder, seed_memories)
+            saved = await snapshot(db)  # what every case starts from, when a case can write
         key_of = {memory_id: key for key, memory_id in ids.items()}
         client = OpenAIClient()
+        writer = (
+            MemoryWriter(
+                session_factory,
+                OpenAIClient(model=settings.extraction_model or settings.agent_model),
+                embedder,
+            )
+            if writes
+            else None
+        )
         loops = {
             memory: AgentLoop(
                 session_factory,
@@ -302,6 +382,8 @@ async def main(
                 clock=lambda: EVAL_NOW,
                 recall_mode=recall_mode,
                 recall_enabled=memory,
+                # The memory-off arm neither recalls nor learns, so it stays the control
+                memory_writer=writer if memory else None,
             )
             for memory in arms
         }
@@ -309,7 +391,15 @@ async def main(
 
         async def one(case, run, memory):
             async with gate:
-                return await run_case(loops[memory], session_factory, case, run, by_key, key_of)
+                return await run_case(
+                    loops[memory],
+                    session_factory,
+                    case,
+                    run,
+                    by_key,
+                    key_of,
+                    saved if writer is not None and memory else None,
+                )
 
         runs: dict[bool, list[CaseRun]] = {}
         for memory in arms:
@@ -319,6 +409,8 @@ async def main(
                 )
             )
     finally:
+        if writer is not None:
+            await writer.close()
         await engine.dispose()
 
     summaries = {("on" if m else "off"): summarize(r, price_in, price_out) for m, r in runs.items()}
@@ -340,6 +432,7 @@ async def main(
                 "recall_mode": recall_mode or settings.memory_search_mode,
                 "recall_limit": settings.recall_limit,
                 "repeat": repeat,
+                "writes": writes,
                 "eval_now": EVAL_NOW.isoformat(),
                 "summary": summaries,
                 "memory_effect": effect,
@@ -366,6 +459,12 @@ if __name__ == "__main__":
     parser.add_argument("--split", choices=SPLITS, default="dev")
     parser.add_argument("--memory", choices=list(ARMS), default="on")
     parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument(
+        "--writes",
+        choices=["on", "off"],
+        default="off",
+        help="let the memory-on arm learn from each turn (needs the key; one case at a time)",
+    )
     parser.add_argument("--recall-mode", choices=MODES, default=None)
     parser.add_argument(
         "--concurrency", type=int, default=1, help="more is faster, and skews the seconds"
@@ -392,6 +491,7 @@ if __name__ == "__main__":
                     arguments.case,
                     arguments.price_in,
                     arguments.price_out,
+                    arguments.writes == "on",
                 )
             )
         )

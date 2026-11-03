@@ -21,7 +21,7 @@ Two pieces of earlier phases are completed here. Phase 3 seeds the memory once p
 - [x] **Agent integration**: the loop starts extraction after the reply is stored and `done` is sent; a failure there never touches the reply; a constructor option turns it off for the memory-off eval
 - [x] **Memory API**: `DELETE /memories/{id}` and `GET /memories/{id}/events`
 - [x] **Memory list controls**: delete in the web app, and the history of one memory (when it was written, from which message, what replaced it)
-- [ ] **Eval isolation**: the agent eval restores the seeded memories before every case, without calling the embeddings API again
+- [x] **Eval isolation**: the agent eval restores the seeded memories before every case, without calling the embeddings API again
 - [ ] **Memory eval**: `evals/memory_eval.py` plays the trap cases (sessions, gaps, probe) against the real agent, memory on and off, dev three times and test once
 - [ ] **Tests**: unit tests with a fake model for extraction, reconciliation, the filter, the write functions, the API and the loop. None needs an API key
 - [ ] **Docs and baselines**: results recorded here, `DESIGN.md` and the README updated, and the open decisions below settled
@@ -232,6 +232,17 @@ The chat view needs no change: a reply recalled memories by id, and a memory rep
 
 **Left as it is.** The announcement stays until the page is reloaded. A delete is one memory at a time, with no bulk delete. A memory's text stays on file after a delete and is shown under Deleted; erasing it for good is still a later question.
 
+## Eval isolation, as built
+
+`snapshot` and `restore` in `backend/app/memory/seed.py`, used by `evals/agent_eval.py --writes on`.
+
+- **Snapshot and restore.** `snapshot` reads the memory tables once after seeding: every row with its id, embedding, dates and status, and every event. `restore` empties both tables and puts the rows back by plain inserts, with their own ids (so a seed key still names the same memory), the replaced-by links last (a replaced memory may point at a later row), the log, and the id counters moved past the largest. The search index is computed by the database again. No embedding is requested, so a restore is a few milliseconds and free.
+- **In the agent eval.** `--writes on` gives the memory-on arm the real memory writer. Before every case the memory is restored from the snapshot; each turn waits for the write it queued, so the next message sees it and the next case never meets a write in flight; what the case changed in memory is recorded (`added: …`, `replaced: home-city (was active)`, `deleted: …`, `removed: …`) in the results and shown for failing cases. The memory-off arm has no writer, so it stays the control. Cases run one at a time with writing on (`--concurrency` above 1 is refused), because every case restores the one shared database.
+- **Off is the default, and it is the phase 3 baseline.** With writing off no case can change memory, so nothing needs restoring and the runs can still go in parallel.
+- **A memory the agent wrote during a case is not judged by the seed.** The runner names a recalled memory that is not a seed row `id:N`, and the leak check no longer counts those as leaks, since there is no seed row to judge them by. Any other unknown key is still a leak, and a written memory beside a real leak does not hide it. What the agent writes is judged by the write path's own checks (the memory write eval).
+- **Tests:** 11 for snapshot and restore against the test database (every row and embedding back, what was added or changed or logged undone, ids kept, links kept, counters continue without a collision, restoring twice is the same, a restore is committed for other connections, `last_used_at` comes back, an empty snapshot) and 10 for the eval plus 3 for the leak check (what a case wrote is recorded and the next case starts clean, a stray memory is removed, each turn waits for its write, the last write has finished before the case returns, no snapshot restores nothing, a written memory recalled in the same case is not a leak, the description of changes, and the option check). Nineteen deliberate breaks each failed a test, after two survivors showed that nothing read the data from a second connection and nothing read `last_used_at` straight from the table.
+- **A real run, dev, one run, writing on:** 35 of 36, the same single miss (`a003`), zero leaks, 490 input tokens a message, exactly the baseline. No case changed memory: the agent cases are questions, and the writer wrote nothing from 36 chats and 38 turns, so it did not invent a memory from a question. This run exercised 36 real restores with the real seeded embeddings and the real writer end to end; it had no write to undo, so the undoing is covered by the unit tests and the end-to-end trap eval, whose cases do write.
+
 ## Eval design
 
 Two evals, because there are two things to get right and a failure in one should not hide in the other.
@@ -249,7 +260,7 @@ Cases cover each trap in `data/memory_traps.yaml` plus ones too small for an end
 
 **End to end, the traps** (`make eval-memory`). The cases in `data/memory_traps.yaml` become `evals/datasets/memory.{dev,test}.jsonl` (the loader already exists). A case plays its sessions through the real agent, moving the clock between sessions by `gap_days` (extraction is given the same clock), waits for the write queue to drain, then asks the probe in a new session and checks the reply by code: `must_include`, `must_not_include`, or "says it does not know". Also run with memory off as the control. The dev split is run three times and the test split once and not tuned on, as in phase 3.
 
-**Isolation.** Writes make cases depend on each other, so the agent eval restores the seeded memories before every case. Seeding calls the embeddings API for 42 memories, which is too slow and costly to repeat per case, so the seeded rows (embeddings included) are read once at the start and written back by plain inserts. A case that can write runs alone: concurrency is one whenever memory is on. The existing 36 dev and 20 test agent cases are re-run as a regression check and their baseline must not move.
+**Isolation.** Writes make cases depend on each other, so the agent eval restores the seeded memories before every case. Seeding calls the embeddings API for 42 memories, which is too slow and costly to repeat per case, so the seeded rows (embeddings included) are read once at the start and written back by plain inserts. A case that can write runs alone: concurrency is one whenever writing is on (`--writes on`). The existing 36 dev and 20 test agent cases are re-run as a regression check and their baseline must not move.
 
 ### Pass conditions
 
