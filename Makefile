@@ -33,6 +33,8 @@ test:
 lint:
 	cd backend && .venv/bin/ruff check --config pyproject.toml . ../evals
 
+# End-to-end memory eval: the trap stories through the real agent, needs OPENAI_API_KEY.
+# ARGS="--split test", "--memory both --repeat 3" or "--case m013"
 eval-memory:
 	cd backend && .venv/bin/python ../evals/memory_eval.py $(ARGS)
 

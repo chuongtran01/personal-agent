@@ -22,7 +22,7 @@ Two pieces of earlier phases are completed here. Phase 3 seeds the memory once p
 - [x] **Memory API**: `DELETE /memories/{id}` and `GET /memories/{id}/events`
 - [x] **Memory list controls**: delete in the web app, and the history of one memory (when it was written, from which message, what replaced it)
 - [x] **Eval isolation**: the agent eval restores the seeded memories before every case, without calling the embeddings API again
-- [ ] **Memory eval**: `evals/memory_eval.py` plays the trap cases (sessions, gaps, probe) against the real agent, memory on and off, dev three times and test once
+- [ ] **Memory eval**: `evals/memory_eval.py` plays the trap cases (sessions, gaps, probe) against the real agent, memory on and off, dev three times and test once. Built, and dev measured; the test split is still to be read, once, after the last change to the prompts
 - [ ] **Tests**: unit tests with a fake model for extraction, reconciliation, the filter, the write functions, the API and the loop. None needs an API key
 - [ ] **Docs and baselines**: results recorded here, `DESIGN.md` and the README updated, and the open decisions below settled
 
@@ -243,6 +243,54 @@ The chat view needs no change: a reply recalled memories by id, and a memory rep
 - **Tests:** 11 for snapshot and restore against the test database (every row and embedding back, what was added or changed or logged undone, ids kept, links kept, counters continue without a collision, restoring twice is the same, a restore is committed for other connections, `last_used_at` comes back, an empty snapshot) and 10 for the eval plus 3 for the leak check (what a case wrote is recorded and the next case starts clean, a stray memory is removed, each turn waits for its write, the last write has finished before the case returns, no snapshot restores nothing, a written memory recalled in the same case is not a leak, the description of changes, and the option check). Nineteen deliberate breaks each failed a test, after two survivors showed that nothing read the data from a second connection and nothing read `last_used_at` straight from the table.
 - **A real run, dev, one run, writing on:** 35 of 36, the same single miss (`a003`), zero leaks, 490 input tokens a message, exactly the baseline. No case changed memory: the agent cases are questions, and the writer wrote nothing from 36 chats and 38 turns, so it did not invent a memory from a question. This run exercised 36 real restores with the real seeded embeddings and the real writer end to end; it had no write to undo, so the undoing is covered by the unit tests and the end-to-end trap eval, whose cases do write.
 
+## End-to-end memory eval, as built
+
+`evals/memory_eval.py`, `memory_checks.py` and `memory_cases.py`, with `evals/datasets/memory.{dev,test}.jsonl` and `data/memory_traps.yaml`. `make eval-memory ARGS="--memory both --repeat 3"`.
+
+**What a case is.** A story: several chat sessions with the clock moved between them, then a probe asked in a new session. Every case starts from an empty memory (the tables are emptied first), so the probe can only be answered if the agent learned the fact from the sessions. The sessions are placed on the clock backwards from the probe, which is always at `EVAL_NOW`, so "next Tuesday" resolves the same way on every day the eval runs. `gap_days` is the days since the previous session, `probe_gap_days` the days between the last session and the probe (the stale-event trap needed it: its session had "gap 60", which could not say the probe was 60 days later). Each turn waits for the memory write it queued.
+
+**What is checked, in code.**
+- The reply: `must_include` (every word must be there), `must_not_include`, and for `not_know` that the reply says it does not know.
+- The table: `must_not_store`, a word that may not appear in any memory the agent wrote, whatever its status. This is what catches a secret or an injected instruction that the reply happens not to repeat. It is zero-tolerance.
+- Leaks: a deleted or an external memory in the probe's prompt, or a replaced one as "current", is zero-tolerance.
+- A case with outside text it never read fails (`external_not_read`), because it then tested nothing.
+- The loader refuses a case that cannot test anything: an `answer` case with no required word (a reply that knew nothing could pass it), a `not_know` case with facts, a word both required and forbidden, a first session with a gap, an empty turn.
+
+**Outside text arrives as a tool result.** Phase 6 will deliver mail and events that way, so the runner gives the agent two fake read tools (`read_latest_email`, `read_next_event`) in the sessions that have outside text, and hands over the text when the agent calls them. The write path takes its context from the words of the chat, so a tool result never reaches the extractor; the injection cases test that for real. In every one of the nine injection runs the agent did read the outside text, and nothing from it was stored.
+
+**The cases.** Twenty-eight dev and twelve test, in the eight categories of the plan (recall, update, forgetting, relevance, stale, sensitive, duplicate, injection), all eight traps in dev, each category in both splits and no input in both. They are written from the traps with variants: a changed fact told over several sessions, a correction in one chat, forgetting a replaced memory, forgetting then telling again, an event still ahead as the control for the stale ones, a secret next to a fact worth keeping, the same fact over three sessions, an injection through a calendar event.
+
+**Results, dev, three runs, memory on and off (84 runs each):**
+
+| | memory on | memory off |
+| --- | --- | --- |
+| Passed | 81 of 84 | 39 of 84 |
+| Forbidden words stored | 0 | 0 |
+| Leaks | 0 | 0 |
+| Errors | 0 | 0 |
+
+| Category | on | off |
+| --- | --- | --- |
+| recall | 15/15 | 0/15 |
+| update | 14/15 | 0/15 |
+| duplicate | 4/6 | 0/6 |
+| forgetting | 12/12 | 9/12 |
+| sensitive | 9/9 | 6/9 |
+| stale | 9/9 | 6/9 |
+| relevance | 9/9 | 9/9 |
+| injection | 9/9 | 9/9 |
+
+These are the numbers as measured, before the `m024` probe was changed (below). After the change `m024` alone passed three runs of three; the whole set was not run again.
+
+How to read it: 15 of the 28 cases need a fact the agent learned (the `answer` cases). Those pass 42 of 45 runs with memory on and none of the 45 with it off, which is the measured effect of memory. The other 13 cases (forgetting, relevance, stale and sensitive ones that expect nothing to be said, and the injections) pass with memory off too, because saying nothing satisfies them. They are there to catch the agent doing something wrong, not to show that memory helps, so only the first group can show that. What the memory table looked like at each probe was also read, not only the answers: Lisbon superseded by Porto, the sister's two memories deleted, a deleted Lisbon with the current Porto kept, one vegetarian memory from five wordings and one Porto memory from three sessions, the trip kept without the passport number, and no card number, password, PIN or injected account in any table.
+
+**Three misses, and what they are.**
+- **`m024`, twice: a fragile check, fixed.** The memory was right (one vegetarian memory). The agent used it, suggesting a chickpea curry, but did not say the word "vegetarian", so a correct reply failed the check. The probe was changed to ask about the diet directly (and so was its test twin, `m110`, before the test split was read); `m024` then passed three runs of three. A change to a dev case after seeing a result, recorded for that reason.
+- **`m008`, once: a real reconciliation miss.** "I work at Acme Logistics", then 30 days later "I just started at Globex": in one run both memories stayed active and the reply mentioned both. Measured alone on the real model, the reconciling call keeps both (`new`) 3 times in 10 for "The owner has started working at Globex" and replaces the old one 7 times in 10; for "The owner works at Globex" it replaces 10 of 10. The statement really is ambiguous, since "I just started at Globex" does not say the owner left Acme, and the reconciler is told to prefer `new` when unsure, because a stored near-duplicate is harmless and a lost fact is not. So this is the conservative choice showing its cost, about a 30 percent miss on a changed job said that way, and it is left as it is. Fixing it means telling the reconciler that a single-valued fact such as a job or a home is replaced by a new one, which would trade this miss for the risk of replacing a real second job; that is a decision, not a bug, and it was not taken.
+- **`m009`, found by the control.** Its first version, a dropped sugar habit, only forbade a phrase, so it passed with memory off as well. It was rewritten as a changed favourite colour, and the loader now refuses any `answer` case without a required word.
+
+**Not done yet.** The test split of this eval has not been read, and neither has the write eval's, because the assistant's wording when told to forget may still change the system prompt, which could move both. They are read once, after the last such change.
+
 ## Eval design
 
 Two evals, because there are two things to get right and a failure in one should not hide in the other.
@@ -258,7 +306,7 @@ Two evals, because there are two things to get right and a failure in one should
 
 Cases cover each trap in `data/memory_traps.yaml` plus ones too small for an end-to-end case (a relative date, a two-fact sentence, "forget that" with several close memories, a correction of a correction, a non-English sentence). Reported: per category passes, proposals per turn, tokens and cost per turn.
 
-**End to end, the traps** (`make eval-memory`). The cases in `data/memory_traps.yaml` become `evals/datasets/memory.{dev,test}.jsonl` (the loader already exists). A case plays its sessions through the real agent, moving the clock between sessions by `gap_days` (extraction is given the same clock), waits for the write queue to drain, then asks the probe in a new session and checks the reply by code: `must_include`, `must_not_include`, or "says it does not know". Also run with memory off as the control. The dev split is run three times and the test split once and not tuned on, as in phase 3.
+**End to end, the traps** (`make eval-memory`). The traps in `data/memory_traps.yaml` become cases in `evals/datasets/memory.{dev,test}.jsonl`. A case plays its sessions through the real agent from an empty memory, moving the clock between them, waits for each write, then asks the probe in a new session and checks the reply, and the memory table, by code. Also run with memory off as the control. The dev split is run three times and the test split once and not tuned on, as in phase 3. How it was built and what it measured is under "End-to-end memory eval, as built".
 
 **Isolation.** Writes make cases depend on each other, so the agent eval restores the seeded memories before every case. Seeding calls the embeddings API for 42 memories, which is too slow and costly to repeat per case, so the seeded rows (embeddings included) are read once at the start and written back by plain inserts. A case that can write runs alone: concurrency is one whenever writing is on (`--writes on`). The existing 36 dev and 20 test agent cases are re-run as a regression check and their baseline must not move.
 
