@@ -22,7 +22,7 @@ Two pieces of earlier phases are completed here. Phase 3 seeds the memory once p
 - [x] **Memory API**: `DELETE /memories/{id}` and `GET /memories/{id}/events`
 - [x] **Memory list controls**: delete in the web app, and the history of one memory (when it was written, from which message, what replaced it)
 - [x] **Eval isolation**: the agent eval restores the seeded memories before every case, without calling the embeddings API again
-- [ ] **Memory eval**: `evals/memory_eval.py` plays the trap cases (sessions, gaps, probe) against the real agent, memory on and off, dev three times and test once. Built, and dev measured; the test split is still to be read, once, after the last change to the prompts
+- [x] **Memory eval**: `evals/memory_eval.py` plays the trap cases (sessions, gaps, probe) against the real agent, memory on and off, dev three times and test once. Dev and the held-out test split are both measured; see "Held-out test results"
 - [ ] **Tests**: unit tests with a fake model for extraction, reconciliation, the filter, the write functions, the API and the loop. None needs an API key
 - [ ] **Docs and baselines**: results recorded here, `DESIGN.md` and the README updated, and the open decisions below settled
 
@@ -289,7 +289,7 @@ How to read it: 15 of the 28 cases need a fact the agent learned (the `answer` c
 - **`m008`, once: a real reconciliation miss.** "I work at Acme Logistics", then 30 days later "I just started at Globex": in one run both memories stayed active and the reply mentioned both. Measured alone on the real model, the reconciling call keeps both (`new`) 3 times in 10 for "The owner has started working at Globex" and replaces the old one 7 times in 10; for "The owner works at Globex" it replaces 10 of 10. The statement really is ambiguous, since "I just started at Globex" does not say the owner left Acme, and the reconciler is told to prefer `new` when unsure, because a stored near-duplicate is harmless and a lost fact is not. So this is the conservative choice showing its cost, about a 30 percent miss on a changed job said that way, and it is left as it is. Fixing it means telling the reconciler that a single-valued fact such as a job or a home is replaced by a new one, which would trade this miss for the risk of replacing a real second job; that is a decision, not a bug, and it was not taken. The wording experiment that came after is under "What the assistant says when told to forget, as built".
 - **`m009`, found by the control.** Its first version, a dropped sugar habit, only forbade a phrase, so it passed with memory off as well. It was rewritten as a changed favourite colour, and the loader now refuses any `answer` case without a required word.
 
-**Not done yet.** The test split of this eval has not been read, and neither has the write eval's. They are read once, after the last change to the prompts; the one change still open is the reconciler's wording for a changed job (below).
+**Test split:** read once, see "Held-out test results".
 
 ## What the assistant says when told to forget, as built
 
@@ -331,7 +331,23 @@ The `m008` miss ("I just started at Globex" leaves two jobs active) was measured
 
 What it says. The current wording is worse than the single `m008` run suggested: "I joined Globex last week" replaces the old job only one time in ten. The simple tilt fixes that and creates a new wrong answer, replacing a part-time second job every time. The refined wording fixes both, and it kept the second job on phrasings it was not written for (freelance, weekend consulting, a side business, a gig), with one borderline 9 in 10. Caution: the part-time exception was written after seeing that failure, so that case passing is partly by construction, which is why the other phrasings were run. A job said with no sign of "on top" ("I started at Globex") is replaced, and if the owner kept both jobs that is wrong; the old memory is kept as history when it is replaced, so it is recoverable, which a wrong "keep both" is not as cleanly (two contradicting facts stay active).
 
-**Not adopted yet.** Changing the reconciler's prompt moves the write eval and the end-to-end eval, and it is a trade-off, so it waits for a decision. If it is adopted, the write eval (dev, three runs) and the end-to-end eval (dev) are re-run, and then both test splits are read once.
+**Decision: not adopted, and the case was fixed instead.** The sentence "I just started at Globex" really is ambiguous, since a person can have two jobs, and keeping both when unsure is a defensible default, so the reconciler's wording is left as it is and the weakness is recorded: "I joined Globex" replaces the old job only about one time in ten. `m008` was rewritten to say it plainly ("I left Acme and just started at Globex"). That fixed the reconciliation (Acme replaced and Globex active in all five runs) and left one failure of another kind: a correct reply, "You work at Globex. You told me in October 2026 that you'd left Acme", contained the forbidden word "Acme", because the stored memory itself says the owner left Acme. The check was narrowed to Acme as the current job ("work at Acme", "works at Acme", "working at Acme"), and `m008` then passed five runs of five. Two dev-case revisions after seeing a result, recorded as such.
+
+## Held-out test results
+
+Both test splits were read once, on the finished prompts, after the dev work was done and with nothing changed afterwards: not the prompts, not the checks, not the cases. A miss was not fixed, and the numbers below are what was measured.
+
+| Eval | Split | Result |
+| --- | --- | --- |
+| Memory write eval, the pipeline (extract, filter, reconcile) | test, 17 cases, one run | **17 of 17**; 12 of 12 with no stored memory, 5 of 5 with some; 0 forbidden words stored, 0 wrong changes |
+| End-to-end memory eval, memory on | test, 12 stories, one run | **11 of 12**; 0 forbidden words stored, 0 leaks |
+| End-to-end memory eval, memory off (the control) | test, 12 stories, one run | **6 of 12**; 0 stored, 0 leaks |
+
+**Reading the end-to-end result.** The six stories that need a learned fact (recall, changed facts, the vegan diet): 5 of 6 with memory on, 0 of 6 with it off. The other six cases (forgetting, relevance, stale, sensitive, injection) pass either way, as on dev, because saying nothing satisfies them. Dev gave 81 of 84 on and 39 of 84 off; the held-out split gives the same shape, 11 of 12 and 6 of 12.
+
+**The one miss, `m103`.** "I drive a Fiat 500", then 40 days later "I sold the Fiat and bought a Tesla", then "What car do I drive?" The reply, "You drive a Tesla. You told me in October 2026 that you sold your Fiat and bought one", is right. The memory table is right too: the Fiat memory is replaced and the Tesla one is active. It fails because the case forbids the bare word "Fiat", and a correct reply can say the owner sold it. That is the same weakness found on dev in `m008` ("Acme"): a forbidden word is a poor stand-in for "the old fact is not offered as current". The dev cases that forbid a bare word (`m006`, `m009` and others) have the same exposure and have not been changed. On the test split the case and the number are left as they were read, 11 of 12, and the honest summary is 12 of 12 memory behaviours correct and one over-strict check. The fix, forbidding the old fact as current (as `m008` now does) and not the word, belongs to the next revision of the cases, with the test split no longer held out.
+
+**What the test split does not change.** The sets are small and hand-written (28 and 12 stories, 38 and 17 write cases), one fake owner, and the dev split was tuned on, so these are a baseline and not a benchmark. The held-out numbers agree with the dev numbers, which is the useful finding: nothing was fitted to dev that the test split contradicts.
 
 ## Eval design
 
