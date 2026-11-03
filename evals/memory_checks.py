@@ -17,6 +17,57 @@ from dataclasses import dataclass
 from agent_checks import normalize, says_unknown
 from memory_cases import MemoryCase
 
+# What an assistant says when it claims it cannot do something. Matched after the same flattening
+# as the other checks, so a curly apostrophe is a straight one
+INABILITY = (
+    "i can't",
+    "i cannot",
+    "i'm not able",
+    "i am not able",
+    "unable to",
+    "not able to",
+    "don't have the ability",
+    "do not have the ability",
+    "don't have a way",
+    "do not have a way",
+    "no way to",
+)
+
+
+# What it says when it claims a deletion that has not happened yet: the memory is updated after the reply
+COMPLETED = (
+    "i've deleted",
+    "i have deleted",
+    "i deleted",
+    "i've removed",
+    "i have removed",
+    "i removed",
+    "i've erased",
+    "i have erased",
+    "i erased",
+    "i've wiped",
+    "i have wiped",
+    "has been deleted",
+    "have been deleted",
+    "has been removed",
+    "have been removed",
+    "already deleted",
+    "already removed",
+    "already forgotten",
+    "i've forgotten",
+    "i have forgotten",
+)
+
+
+def refuses(reply: str) -> bool:
+    text = normalize(reply)
+    return any(phrase in text for phrase in INABILITY)
+
+
+def claims_done(reply: str) -> bool:
+    text = normalize(reply)
+    return any(phrase in text for phrase in COMPLETED)
+
 
 @dataclass(frozen=True)
 class StoredMemory:
@@ -67,8 +118,12 @@ def check_case(
     memories: Sequence[StoredMemory],
     recalled: Sequence[RecalledId],
     external_read: bool,
+    session_replies: Sequence[str] = (),
 ) -> Verdict:
-    """What failed for one case. ``error`` is the code of a turn that ended without an answer."""
+    """What failed for one case. ``error`` is the code of a turn that ended without an answer.
+
+    ``session_replies`` holds what the assistant said in each session, in order, for the sessions
+    that ask that it neither claim it cannot do what it was asked nor claim it is already done."""
     failures: list[str] = []
     if error:
         # An empty answer would pass every "must not say" check, so an error fails on its own
@@ -78,6 +133,12 @@ def check_case(
     if needs_external and not external_read:
         # The scenario is about outside text, and the agent never looked at it: it tested nothing
         failures.append("external_not_read")
+
+    for number, (session, said) in enumerate(zip(case.sessions, session_replies, strict=False), 1):
+        if session.reply_must_not_misstate and refuses(said):
+            failures.append(f"refused:session_{number}")
+        if session.reply_must_not_misstate and claims_done(said):
+            failures.append(f"claimed_done:session_{number}")
 
     text = normalize(answer)
     failures += [f"missing_word:{w}" for w in case.must_include if normalize(w) not in text]

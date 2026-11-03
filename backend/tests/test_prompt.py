@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfoNotFoundError
 import pytest
 from memory_cases import EVAL_NOW
 
-from app.agent.prompt import MAX_MEMORY_CHARS, build_system_prompt
+from app.agent.prompt import LEARNS, MAX_MEMORY_CHARS, build_system_prompt
 from app.memory.recall import Recalled
 from app.memory.search import SearchResult
 
@@ -144,3 +144,38 @@ def test_the_same_inputs_give_the_same_prompt():
 def test_an_unknown_time_zone_is_an_error_not_a_silent_utc():
     with pytest.raises(ZoneInfoNotFoundError):
         prompt(timezone="Nope/Nowhere")
+
+
+# What to say when told to forget ---------------------------------------------------------------------
+
+
+def test_an_agent_that_learns_is_told_what_to_say_when_asked_to_forget():
+    text = prompt(learns=True)
+
+    assert "saved automatically after you answer" in text
+    assert "say in plain words that you will stop using it" in text
+    assert "Do not say that it is already deleted" in text
+    assert "never say that you cannot delete or forget" in text
+    assert "Do not list what you saved or promise a specific entry" in text
+
+
+def test_an_agent_that_does_not_learn_is_not_told_it_does():
+    for text in (prompt(), prompt(learns=False)):
+        assert "saved automatically" not in text and "Never say that you cannot" not in text
+
+
+def test_the_learning_rule_comes_after_the_other_rules_and_before_the_memories():
+    text = build_system_prompt(
+        now=NOW, recalled=Recalled(current=(memory("Likes tea."),)), learns=True
+    )
+
+    assert (
+        text.index("Never mention memory ids.")
+        < text.index("What you learn:")
+        < text.index("What you remember that may bear")
+    )
+
+
+def test_the_prompt_is_the_same_as_before_when_the_agent_does_not_learn():
+    assert prompt() == prompt(learns=False)
+    assert prompt(learns=True).replace(LEARNS, "") == prompt()

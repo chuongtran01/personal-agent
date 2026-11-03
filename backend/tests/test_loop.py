@@ -779,3 +779,25 @@ async def test_closing_the_loop_closes_its_writer_and_is_fine_without_one(sessio
     await make_loop(session_factory, ScriptedLLM()).close()
 
     assert writer.closed
+
+
+async def test_the_prompt_tells_a_learning_agent_what_to_say_when_asked_to_forget(
+    session_factory, chat
+):
+    llm = ScriptedLLM(reply("ok"))
+    loop = make_loop(session_factory, llm, memory_writer=FakeWriter())
+
+    await play(loop, chat, "hello")
+
+    assert "What you learn:" in llm.calls[0].system
+
+
+async def test_the_prompt_says_nothing_of_learning_when_there_is_no_writer(session_factory, chat):
+    llm = ScriptedLLM(reply("ok"))
+
+    await play(make_loop(session_factory, llm), chat, "hello")
+
+    assert (
+        "What you learn:" not in llm.calls[0].system
+        and "saved automatically" not in llm.calls[0].system
+    )

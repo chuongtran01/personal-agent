@@ -37,6 +37,18 @@ Never offer one as current, and never offer an event that has already happened a
 - Never mention memory ids.\
 """
 
+# Only added when the server really does learn after each reply. Without a memory writer the
+# assistant must not say that it saved or removed anything, so the rule is left out then.
+LEARNS = """\
+
+What you learn:
+- What the owner tells you in this chat is saved automatically after you answer, and when they ask \
+you to forget or delete something it is removed then. If they do, say in plain words that you will \
+stop using it, for example "Understood, I won't use that again." Do not say that it is already \
+deleted, and never say that you cannot delete or forget something. Do not list what you saved or \
+promise a specific entry.\
+"""
+
 _SOURCES = {"owner": "owner said", "external": "from an email or event, not the owner"}
 
 
@@ -61,16 +73,23 @@ def _block(title: str, memories: tuple[SearchResult, ...], zone: ZoneInfo) -> st
 
 
 def build_system_prompt(
-    *, now: datetime, recalled: Recalled, owner_name: str = "", timezone: str = "UTC"
+    *,
+    now: datetime,
+    recalled: Recalled,
+    owner_name: str = "",
+    timezone: str = "UTC",
+    learns: bool = False,
 ) -> str:
-    """The prompt for one model call. ``now`` is the clock the rest of the turn used."""
+    """The prompt for one model call. ``now`` is the clock the rest of the turn used.
+
+    ``learns`` says that the server writes memories after each reply, which adds what to say when the
+    owner asks to forget something."""
     zone = ZoneInfo(timezone)
     today = now.astimezone(zone).strftime("%A %d %B %Y").replace(" 0", " ")
-    parts = [
-        INSTRUCTIONS.format(
-            owner=_flatten(owner_name) or "one owner", today=today, timezone=timezone
-        )
-    ]
+    instructions = INSTRUCTIONS.format(
+        owner=_flatten(owner_name) or "one owner", today=today, timezone=timezone
+    )
+    parts = [instructions + (LEARNS if learns else "")]
     if recalled.current:
         parts.append(
             _block("What you remember that may bear on this message:", recalled.current, zone)

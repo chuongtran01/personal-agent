@@ -201,3 +201,91 @@ def test_a_forbidden_word_is_caught_whatever_its_case_or_punctuation():
     assert check(case(), "You LIVED IN LISBON, then Porto.").failures == ("forbidden_word:Lisbon",)
     ignore = case(expected_behavior="ignore", must_not_include=["it's"], must_include=[])
     assert check(ignore, "IT’S Lisbon").failures == ("forbidden_word:it's",)
+
+
+# What the assistant says when it is told to forget -----------------------------------------------
+
+
+def forget_case():
+    return case(
+        sessions=[
+            {"turns": ["I had knee surgery."]},
+            {"turns": ["Forget it."], "gap_days": 1, "reply_must_not_misstate": True},
+        ],
+        expected_behavior="ignore",
+        must_include=[],
+        must_not_include=["surgery"],
+    )
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "I can't delete that.",
+        "I can’t forget it from here.",
+        "I cannot remove saved notes.",
+        "I'm not able to erase it.",
+        "I am not able to do that.",
+        "I'm unable to do that.",
+        "I don't have the ability to delete.",
+        "There is no way to remove it.",
+    ],
+)
+def test_a_reply_that_claims_inability_is_a_refusal(said):
+    verdict = check(forget_case(), "Fine.", session_replies=["Noted.", said])
+
+    assert verdict.failures == ("refused:session_2",)
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Done. I won't use that again.",
+        "OK, I'll stop using that.",
+        "Forgotten.",
+        "Sure, it's out of my notes.",
+    ],
+)
+def test_a_reply_that_says_it_will_stop_is_not_a_refusal(said):
+    assert check(forget_case(), "Fine.", session_replies=["Noted.", said]).passed
+
+
+def test_only_a_session_that_asked_is_held_to_it():
+    verdict = check(forget_case(), "Fine.", session_replies=["I can't promise anything.", "Done."])
+
+    assert verdict.passed
+
+
+def test_without_session_replies_there_is_nothing_to_check():
+    assert check(forget_case(), "Fine.").passed
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Understood — I’ve deleted what I knew about your sister and won’t use it again.",
+        "I have removed that from my notes.",
+        "It has been deleted.",
+        "Done, that is already deleted.",
+        "I erased it.",
+        "I've forgotten it now.",
+    ],
+)
+def test_a_reply_that_claims_the_deletion_is_already_done_is_flagged(said):
+    verdict = check(forget_case(), "Fine.", session_replies=["Noted.", said])
+
+    assert verdict.failures == ("claimed_done:session_2",)
+
+
+def test_a_reply_that_both_refuses_and_claims_is_flagged_for_both():
+    verdict = check(
+        forget_case(),
+        "Fine.",
+        session_replies=["Noted.", "I can't delete it, but I've removed it."],
+    )
+
+    assert verdict.failures == ("refused:session_2", "claimed_done:session_2")
+
+
+def test_a_claim_of_completion_in_a_session_that_did_not_ask_is_not_flagged():
+    assert check(forget_case(), "Fine.", session_replies=["I've removed the typo.", "Done."]).passed

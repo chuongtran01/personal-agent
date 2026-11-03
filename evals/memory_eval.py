@@ -143,6 +143,7 @@ class CaseRun:
     leaks: tuple[str, ...]
     answer: str
     error: str | None
+    session_replies: tuple[str, ...]  # what the assistant said in each session, played in order
     memories: tuple[str, ...]  # the table when the probe was asked, in words
     recalled: tuple[int, ...]
     external_read: bool
@@ -196,6 +197,7 @@ async def play_case(
     )
     delivered = 0
     error: str | None = None
+    session_replies: list[str] = []
 
     def loop_for(tools=None) -> AgentLoop:
         return AgentLoop(
@@ -216,13 +218,16 @@ async def play_case(
             loop = loop_for(tools)
             async with session_factory() as db:
                 chat = await store.create_session(db)
+            said: list[str] = []
             for turn in session.turns:
                 played = await say(loop, chat, turn)
+                said.append(played.answer)
                 if writer is not None:
                     await writer.drain()
                 if played.error:
                     error = f"session:{played.error}"
                     break
+            session_replies.append(" ".join(said))
             delivered += tools.delivered if tools else 0
             if error:
                 break
@@ -255,6 +260,7 @@ async def play_case(
         recalled=[RecalledId(i, False) for i in probed.current]
         + [RecalledId(i, True) for i in probed.past],
         external_read=delivered > 0,
+        session_replies=session_replies,
     )
     done = probed.done
     return CaseRun(
@@ -269,6 +275,7 @@ async def play_case(
         leaks=verdict.leaks,
         answer=probed.answer,
         error=error,
+        session_replies=tuple(session_replies),
         memories=tuple(describe(m) for m in memories),
         recalled=probed.current + probed.past,
         external_read=delivered > 0,

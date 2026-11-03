@@ -270,6 +270,7 @@ class AgentLoop:
             recalled=recalled,
             owner_name=settings.owner_name,
             timezone=settings.owner_timezone,
+            learns=self._memory_writer is not None,
         )
         tools = tuple(self._tools.specs())
         usage = Usage()

@@ -184,7 +184,7 @@ One thing it showed for reconciliation: for "Actually, I hate mornings. I run in
 
 **What that run found.** The first run did not forget: the Lisbon memory had already been replaced, and reconciliation only looked at active memories, so it could not find it, and the agent went on answering from it. The eval had missed it because every delete case targeted an active memory. A request to forget now also searches the replaced memories, marked "no longer true" for the model, which is told that a request about the past is about those and a request about the present is not. Adds still compare only with active memories, so a repeated old fact is not mistaken for a repeat. Two cases cover it (`e038` and `e117`, one in each split, added before the test split was read), and the eval's lookup and checks follow the same rule: a replaced memory may be deleted, never replaced, and a deleted one neither.
 
-**Still open.** The assistant's wording when told to forget is not controlled yet. In the first run it said "I can't delete the saved note from here, but I'll treat it as forgotten" (the memory then stayed and was used), and in the second "Done. I won't use or bring up that you used to live in Lisbon" (which was true). The system prompt says it cannot take actions, and nothing tells it that memory is updated after its reply. The plan's decision is that it says it will stop using it; changing the prompt moves the agent eval baseline, so it is measured separately.
+**Resolved later:** the assistant's wording when told to forget is controlled now. See "What the assistant says when told to forget, as built".
 
 ## Memory API, as built
 
@@ -286,10 +286,52 @@ How to read it: 15 of the 28 cases need a fact the agent learned (the `answer` c
 
 **Three misses, and what they are.**
 - **`m024`, twice: a fragile check, fixed.** The memory was right (one vegetarian memory). The agent used it, suggesting a chickpea curry, but did not say the word "vegetarian", so a correct reply failed the check. The probe was changed to ask about the diet directly (and so was its test twin, `m110`, before the test split was read); `m024` then passed three runs of three. A change to a dev case after seeing a result, recorded for that reason.
-- **`m008`, once: a real reconciliation miss.** "I work at Acme Logistics", then 30 days later "I just started at Globex": in one run both memories stayed active and the reply mentioned both. Measured alone on the real model, the reconciling call keeps both (`new`) 3 times in 10 for "The owner has started working at Globex" and replaces the old one 7 times in 10; for "The owner works at Globex" it replaces 10 of 10. The statement really is ambiguous, since "I just started at Globex" does not say the owner left Acme, and the reconciler is told to prefer `new` when unsure, because a stored near-duplicate is harmless and a lost fact is not. So this is the conservative choice showing its cost, about a 30 percent miss on a changed job said that way, and it is left as it is. Fixing it means telling the reconciler that a single-valued fact such as a job or a home is replaced by a new one, which would trade this miss for the risk of replacing a real second job; that is a decision, not a bug, and it was not taken.
+- **`m008`, once: a real reconciliation miss.** "I work at Acme Logistics", then 30 days later "I just started at Globex": in one run both memories stayed active and the reply mentioned both. Measured alone on the real model, the reconciling call keeps both (`new`) 3 times in 10 for "The owner has started working at Globex" and replaces the old one 7 times in 10; for "The owner works at Globex" it replaces 10 of 10. The statement really is ambiguous, since "I just started at Globex" does not say the owner left Acme, and the reconciler is told to prefer `new` when unsure, because a stored near-duplicate is harmless and a lost fact is not. So this is the conservative choice showing its cost, about a 30 percent miss on a changed job said that way, and it is left as it is. Fixing it means telling the reconciler that a single-valued fact such as a job or a home is replaced by a new one, which would trade this miss for the risk of replacing a real second job; that is a decision, not a bug, and it was not taken. The wording experiment that came after is under "What the assistant says when told to forget, as built".
 - **`m009`, found by the control.** Its first version, a dropped sugar habit, only forbade a phrase, so it passed with memory off as well. It was rewritten as a changed favourite colour, and the loader now refuses any `answer` case without a required word.
 
-**Not done yet.** The test split of this eval has not been read, and neither has the write eval's, because the assistant's wording when told to forget may still change the system prompt, which could move both. They are read once, after the last such change.
+**Not done yet.** The test split of this eval has not been read, and neither has the write eval's. They are read once, after the last change to the prompts; the one change still open is the reconciler's wording for a changed job (below).
+
+## What the assistant says when told to forget, as built
+
+`LEARNS` in `backend/app/agent/prompt.py`, `reply_must_not_misstate` in the end-to-end eval.
+
+**The problem, measured.** The memory is updated after the reply, and the assistant did not know that: its prompt says it cannot take actions and never mentions memory. On the four forget stories (five runs each) it said it could not do what it was asked in 6 of 20 replies, every time the owner used the word "delete" ("delete everything you know about my sister": "I can't delete stored information from here"), although the memory was deleted right after in every one of those runs. When the owner said "forget" it answered correctly ("Understood, I won't use that again"). So the reply was false and the effect was right.
+
+**The fix.** When, and only when, the agent has a memory writer, the prompt gets a short rule: what the owner says is saved automatically after the reply, and a request to forget or delete is carried out then; say in plain words that you will stop using it, for example "Understood, I won't use that again"; do not say that it is already deleted; never say that you cannot delete or forget; do not list what you saved or promise a specific entry. With no writer the rule is left out, so the assistant never claims something the server will not do. The loop passes `learns=self._memory_writer is not None`.
+
+**The check.** A session in a story can say `reply_must_not_misstate`: none of its replies may claim the assistant cannot do it (a phrase list: "I can't", "I cannot", "unable to", "no way to", and so on) or claim that it is already done ("I've deleted", "has been removed", and so on), after the same flattening as the other checks. It is set on the five forget sessions (`m011` to `m014` in dev, `m105` in test). Looking at the replies after the first fix showed one saying "I've deleted what I knew about your sister", which is true here but would be false if reconciliation found nothing to delete, so the second phrase list and the sentence "do not say that it is already deleted" were added.
+
+**Measured, dev, the four forget stories, five runs each (20 runs):**
+
+| | before | after |
+| --- | --- | --- |
+| Passed | 14 | 20 |
+| Replies saying it cannot | 6 | 0 |
+| Replies saying it is already deleted | not checked | 0 |
+
+**Regression, on the finished prompt:** the agent eval with writing on passed 35 of 36, the same single `a003` miss, with zero leaks; the end-to-end dev set passed 28 of 28 with nothing forbidden stored and no leak. With writing off the prompt is unchanged, so the phase 3 baseline cannot move. **The cost:** the rule adds about 94 input tokens to every message of an agent that learns (490 to 584 a message in the agent eval).
+
+**Tests:** 6 for the prompt and the loop (the rule is there only with a writer, after the other rules and before the memories, with each of its sentences), 7 test functions for the two phrase lists and the flag (22 cases once their lists of phrases are expanded), 5 for the runner and 2 for the loader. Sixteen deliberate breaks (6 on the refusal check, 5 on the completed-deletion check, 3 on the prompt rule, 2 on the loop) each failed a test.
+
+## The reconciler and a changed job: an experiment, and a decision still open
+
+The `m008` miss ("I just started at Globex" leaves two jobs active) was measured on the real model, one reconciling call at a time, ten calls each, with the stored memory and the owner's words given. Three wordings of the reconciler's instruction for `replaces`:
+- **current:** prefer `new` when unsure.
+- **tilted:** a job, a home, a phone provider and other things a person has one of at a time are replaced when the owner says they started, moved or switched, unless they say they keep both; pets, allergies, friends and hobbies are not.
+- **refined:** the same, and a new one described as part-time, a side job, extra, a second one or on top of the first is added.
+
+26 scenarios, 260 calls per wording: scenarios where replacing is right (a changed job said two ways, a move, a switched provider, a promotion, a changed favourite) and where it would be wrong (a second job, a Friday job, freelance work, weekend consulting, a side business, a second pet, another allergy, another language, a hobby, a friend, a parents' home, a holiday flat, someone else's home).
+
+| | current | tilted | refined |
+| --- | --- | --- | --- |
+| Right, out of 260 | 250 | 249 | 259 |
+| "I just started at Globex" replaces | 7 or 8 in 10 | 10 | 10 |
+| "I joined Globex last week" replaces | 1 or 2 in 10 | 10 | 10 |
+| "I started a part-time job at Globex" is added | 10 | **0** | 10 |
+
+What it says. The current wording is worse than the single `m008` run suggested: "I joined Globex last week" replaces the old job only one time in ten. The simple tilt fixes that and creates a new wrong answer, replacing a part-time second job every time. The refined wording fixes both, and it kept the second job on phrasings it was not written for (freelance, weekend consulting, a side business, a gig), with one borderline 9 in 10. Caution: the part-time exception was written after seeing that failure, so that case passing is partly by construction, which is why the other phrasings were run. A job said with no sign of "on top" ("I started at Globex") is replaced, and if the owner kept both jobs that is wrong; the old memory is kept as history when it is replaced, so it is recoverable, which a wrong "keep both" is not as cleanly (two contradicting facts stay active).
+
+**Not adopted yet.** Changing the reconciler's prompt moves the write eval and the end-to-end eval, and it is a trade-off, so it waits for a decision. If it is adopted, the write eval (dev, three runs) and the end-to-end eval (dev) are re-run, and then both test splits are read once.
 
 ## Eval design
 
@@ -325,7 +367,7 @@ Cases cover each trap in `data/memory_traps.yaml` plus ones too small for an end
 | Which model extracts | A separate call after the turn, using a setting (`EXTRACTION_MODEL`) that defaults to the chat model; the eval reports cost so a cheaper model can be compared on the same cases |
 | Extraction and the busy lock | The chat is free for the next message as soon as the reply is stored and `done` is sent; extraction is queued separately and in order |
 | When extraction fails | The reply stands; the failure is logged without the owner's text; nothing is retried in this phase. A missed memory is a quality problem, not a correctness one |
-| What the assistant says when told something | It may say "noted" in its own words, but the prompt does not let it list what it stored or promise a specific memory, because the write has not happened when it answers. A "forget" gets "I'll stop using that" and the owner can check the list |
+| What the assistant says when told something | It may say "noted" in its own words, but the prompt does not let it list what it stored or promise a specific memory, because the write has not happened when it answers. When asked to forget it says it will stop using it, never that it cannot, and never that it is already deleted. The rule is in the prompt only when the server really writes memories |
 | Who may delete | Only an explicit owner request in chat, or the owner in the web app. Reconciliation never deletes to resolve a contradiction; that supersedes |
 | Contradiction | The newer owner statement wins and supersedes; the old one stays as history |
 | Similar closeness threshold | A cosine threshold set from the dev cases and recorded here; the second call decides within it |

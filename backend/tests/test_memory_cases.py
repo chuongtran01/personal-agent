@@ -267,3 +267,25 @@ def test_every_committed_answer_case_names_what_the_reply_must_contain():
     for case in load_cases("dev") + load_cases("test"):
         if case.expected_behavior == "answer":
             assert case.must_include, case.id
+
+
+def test_a_session_does_not_forbid_a_refusal_unless_it_asks(tmp_path):
+    asking = [
+        {"turns": ["I live in Lisbon."]},
+        {"turns": ["Forget it."], "gap_days": 1, "reply_must_not_misstate": True},
+    ]
+    write(tmp_path, [CASE | {"sessions": asking}])
+
+    [case] = load_cases("dev", directory=tmp_path)
+
+    assert [s.reply_must_not_misstate for s in case.sessions] == [False, True]
+
+
+def test_the_committed_forget_cases_ask_that_the_assistant_not_refuse():
+    asking = {
+        c.id
+        for c in load_cases("dev") + load_cases("test")
+        if any(s.reply_must_not_misstate for s in c.sessions)
+    }
+
+    assert asking == {"m011", "m012", "m013", "m014", "m105"}
