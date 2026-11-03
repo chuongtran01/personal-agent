@@ -1,6 +1,6 @@
 # Phase 5: Memory writes
 
-**Status:** in progress
+**Status:** done
 **Gate:** a fact the owner states in one session is used in the next; a changed fact replaces the old one, a forgotten one is never used again, and nothing that should not be stored is stored
 
 ## Goal
@@ -23,8 +23,8 @@ Two pieces of earlier phases are completed here. Phase 3 seeds the memory once p
 - [x] **Memory list controls**: delete in the web app, and the history of one memory (when it was written, from which message, what replaced it)
 - [x] **Eval isolation**: the agent eval restores the seeded memories before every case, without calling the embeddings API again
 - [x] **Memory eval**: `evals/memory_eval.py` plays the trap cases (sessions, gaps, probe) against the real agent, memory on and off, dev three times and test once. Dev and the held-out test split are both measured; see "Held-out test results"
-- [ ] **Tests**: unit tests with a fake model for extraction, reconciliation, the filter, the write functions, the API and the loop. None needs an API key
-- [ ] **Docs and baselines**: results recorded here, `DESIGN.md` and the README updated, and the open decisions below settled
+- [x] **Tests**: unit tests with a fake model for extraction, reconciliation, the filter, the write functions, the API and the loop. None needs an API key
+- [x] **Docs and baselines**: results recorded here, `DESIGN.md` and the README updated, and the open decisions below settled
 
 ## Architecture
 
@@ -412,6 +412,35 @@ Cases cover each trap in `data/memory_traps.yaml` plus ones too small for an end
 | Isolation | Two runs of the agent eval in a row give the same memory at the start of every case |
 | Phase 3 and 4 | The agent eval baseline does not move; `pytest` and `make web-test` pass with no API key and no server |
 | Browser check | The gate scenario run by hand against the real API, results recorded here |
+
+## Gate check, results
+
+Run on 3 November 2026. Where a row had no direct evidence before, it was run for this check; the others cite the measurements above.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Used in the next session | Pass | Recall stories: 15 of 15 on dev (3 runs), 3 of 3 on the held-out split. In the browser: "I live in Lisbon" in one chat showed in the memory list, and a new chat answered "You live in Lisbon" with the memory shown as recalled |
+| Update | Pass, with two notes | Changed-fact and conflicting-statement stories: Lisbon replaced by Porto, the old row `superseded` and linked, found again by "where did I live before Porto?" (browser, events audit). Dev update stories 14 of 15 (the miss is the ambiguous "I just started at Globex", see above); held-out 1 of 2, the other being `m103`, a correct reply that failed an over-strict check |
+| Forgetting | Pass | The memory is `deleted` with an event "the owner asked to forget it"; in the isolation run asking to forget the dog deleted only the dog; in the browser the forgotten fact was under Deleted and "where did I live before Porto?" answered "I don't know". Forget stories 20 of 20, with no "I can't" and no "I've deleted" in any reply |
+| False memory | Pass | Assistant claims, questions and requests store nothing (write eval: no-write 6 of 6 and assistant-claim 3 of 3 on dev, 3 of 3 and 1 of 1 on test). Injection through an email or a calendar event: 9 of 9 on dev, 1 of 1 on test, the agent read the outside text every time and nothing was stored |
+| Sensitive | Pass | 0 forbidden words stored in every run of every eval (dev 84 end-to-end runs per arm, 111 write runs, and both held-out splits). In the browser a card number and PIN left no memory |
+| Duplicates | Pass | One memory from five wordings and from three sessions on dev; one vegetarian memory from "I'm vegetarian" and "I don't eat meat" in the browser and in the events audit |
+| Stale | Pass | Stale stories 9 of 9 on dev (3 runs) and 1 of 1 held-out; an event still ahead is not hidden (`m020`) |
+| Events | Pass | Audit of a real multi-write run: 4 memories, 6 events, each memory begins with `created`, every reason is one of the fixed phrases, every event points at a real owner message, no reason quotes a memory, `superseded` and `deleted` agree with each row's status and link, events in time order. The browser run's table agreed |
+| Web app | Pass | Delete by keyboard asked first (focus on Cancel), removed the row, stayed deleted after a reload; the history read "Written … Deleted … by the owner in the app"; an old reply showed its recalled memory as "a memory that has since been deleted", with no text. 415 frontend tests |
+| Failure | Pass | 16 forced failures. A real one: the writer's model did not exist (the provider answered 404), and the reply streamed and was stored unchanged, nothing was written, the failure was logged without the owner's text, and the same writer recovered on the next turn. Garbage from the model (an empty object, no list, a list, null, a kind or an op that does not exist, text too long or empty), a failing model and a failing embedder: each left the reply exactly as it was and wrote nothing |
+| Isolation | Pass | Two runs of three cases that really write (add, replace a seeded memory, delete a seeded one): after every case the restored memory equals the seeded snapshot row for row (ids, embeddings, statuses, events), and each case's list of changes holds only its own |
+| Phase 3 and 4 | Pass | Agent eval, dev: memory on 35 of 36 (the same `a003` miss), memory off 10 of 36, 0 leaks, 490 input tokens a message: the phase 3 baseline. 957 backend tests pass with an empty API key and no server, 415 frontend tests, ruff clean |
+| Browser check | Pass | 14 of 14, below |
+
+**Browser check.** Run on a production build in Chrome, against the real API and the real model, from an empty memory, with the memory writer on, driven by a script that acts as the owner would. Fourteen checks, all passed: a stated fact shows in the memory list; a new chat uses it and shows it was recalled; a changed fact leaves Porto under Active and Lisbon under Replaced; the new fact is answered and not the old one; a question about the past finds the replaced one; asked to forget, the reply is "Understood. I won't use that again."; the forgotten memory is under Deleted; after forgetting the old fact is never used; a card number and PIN are not stored; two ways of saying one thing make one memory; delete from the list by keyboard (focus starts on Cancel); it stays deleted after a reload; the history is readable; an old reply shows its memory as deleted without its text; a phone-width page does not scroll sideways. The final table agreed with the screens.
+
+**What is left as it is.**
+- `m008` was ambiguous as first written and the reconciler keeps both jobs when unsure ("I joined Globex" replaces the old one about one time in ten). Left, and recorded.
+- Several dev cases forbid a bare word, which a correct reply can say (`m103` on the held-out split failed that way).
+- The test splits are small (12 stories, 17 write cases, one fake owner) and were read once, so they are a baseline.
+- There is no edit and no restore of a memory in the app, by decision; chat is how a memory is changed, and phase 12 plans a better way.
+- A deleted memory's text stays on file; erasing it for good is a later question.
 
 ## Not in this phase
 

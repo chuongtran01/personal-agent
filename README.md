@@ -4,7 +4,7 @@ A personal assistant for one person that **remembers**. It keeps facts, preferen
 
 No agent framework: the loop, the memory and the rules are written by hand, so every step is visible and testable. Rules live in code, not in the prompt. Evals are written before the code they measure.
 
-> **Work in progress.** It is built in phases, each ending in a gate that has to pass before the next starts. Phases 1 to 4 are done; phase 5 (memory writes) is in progress. The plan is in [`docs/DESIGN.md`](docs/DESIGN.md).
+> **Work in progress.** It is built in phases, each ending in a gate that has to pass before the next starts. Phases 1 to 5 are done; phase 6 (calendar and email over MCP, read-only) is next. The plan is in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Status
 
@@ -14,7 +14,7 @@ No agent framework: the loop, the memory and the rules are written by hand, so e
 | 2 | Memory store and retrieval: keyword, vector and hybrid search with recency | done |
 | 3 | Agent loop and API: recall before each reply, owner login, streaming API, agent evals | done |
 | 4 | Web app: login, chats, streaming chat view, recalled memories, memory list | done |
-| 5 | Memory writes: extraction, update, forget | in progress |
+| 5 | Memory writes: extraction, update, forget, delete and history in the web app | done |
 | 6 to 7 | Calendar and email over MCP, writes with confirmation | planned |
 | 8 | Chat compaction | planned |
 | 9 | Full evals, tracing, polish | planned |
@@ -27,7 +27,7 @@ No agent framework: the loop, the memory and the rules are written by hand, so e
 - **An agent that uses it.** Before each reply the loop recalls relevant memories (and replaced ones, when asked about the past), puts them in the prompt as labelled data, and streams the answer. It says "I don't know" for what it was never told.
 - **A streaming API** behind a single-owner login (argon2 password hash, signed token): chats, messages as server-sent events, and a memory list with delete and a history for each memory.
 - **A web app** built on Next.js, Tailwind and shadcn/ui: login, a chat list and a streaming chat view that shows which memories each reply recalled, and a memory list by status where a memory can be deleted and its history read.
-- **An agent that learns** (phase 5, still being finished). After each reply a background step decides what the owner said that is worth keeping and writes it: a stated fact is remembered in the next chat, a changed one replaces the old one, a request to forget stops it being used, and anything that looks like a card number, password or key is filtered out in code before it is written. It works end to end on a real model; its evals are not finished, so there are no numbers for it below.
+- **An agent that learns.** After each reply a background step decides what the owner said that is worth keeping and writes it: a stated fact is remembered in the next chat, a changed one replaces the old one (and stays as history), a request to forget stops it being used, and anything that looks like a card number, password or key is filtered out in code before it is written. Text that came from outside (an email, an event) does not reach the step that decides what to remember, which reads only the words of the chat, and the injection tests found nothing stored from it. The owner can delete a memory in the web app and read why each one exists; to correct one they tell the assistant.
 
 ## How memory is written
 
@@ -54,6 +54,18 @@ Measured on a small hand-written set (one fake owner, 42 memories; 36 dev and 20
 | Memories in a prompt that may not be there | 0 | 0 |
 
 The cases that need a stored fact pass 72 of 75 with memory on and 0 of 75 with it off. The one miss is a paraphrase ("suggest a restaurant" does not recall "vegetarian"), kept as a known case for a later phase.
+
+### Memory writes (phase 5)
+
+Stories over several chat sessions, the clock moved between them, from an empty memory, then a probe in a new session. The reply and the memory table are judged by code. Same caveats: small hand-written sets, one fake owner, the dev split tuned on and the test split read once. Details and the misses are in [`docs/PHASE5.md`](docs/PHASE5.md).
+
+| | memory on | memory off |
+| --- | --- | --- |
+| Dev, 3 runs (84 stories played) | 81 passed | 39 passed |
+| Test, 1 run (12 stories) | 11 passed | 6 passed |
+| Forbidden words stored, memories leaked into a prompt | 0 | 0 |
+
+The stories that need a learned fact pass 42 of 45 on dev and 5 of 6 on test with memory on, and none with it off. The write path alone (extract, filter, reconcile) passed 111 of 111 dev runs and 17 of 17 test cases. Of the four misses, three were checks that were too strict for a correct reply, and one is a real weakness: "I joined Globex" replaces the old job only about one time in ten, because the reconciler keeps both when unsure.
 
 ## Run it
 
@@ -83,7 +95,7 @@ make web                      # the web app on :3000 (forwards /api to the API)
 | `make eval-memory-retrieval` | Retrieval eval: recall@5, MRR and leaks per search mode |
 | `make eval-memory ARGS="--memory both --repeat 3"` | End-to-end memory eval: stories over several sessions through the real agent, memory on and off (some cents of API use) |
 | `make eval-agent ARGS="--memory both --repeat 3"` | Agent eval on the real loop, memory on and off (a few cents of API use); `--writes on` lets the agent learn, restoring the seeded memory before every case |
-| `make eval-memory-write ARGS="--split test"` | Memory write eval: the write path on fixed turns (phase 5; so far the extractor alone and a baseline that stores nothing) |
+| `make eval-memory-write ARGS="--split test"` | Memory write eval: the write path (extract, filter, reconcile) on fixed turns, with a baseline that stores nothing and the extractor alone as other writers |
 | `make hooks` | Turn on the git hooks: checks before a commit, tests and a production build before a push |
 
 ## Layout
