@@ -1,4 +1,4 @@
-.PHONY: up down db-reset migrate seed install hooks test lint eval-memory eval-memory-retrieval eval-agent eval-memory-write api web-install web web-lint web-test web-build
+.PHONY: up down db-reset migrate seed install hooks test lint eval-memory eval-memory-retrieval eval-agent eval-memory-write eval-tools api web-install web web-lint web-test web-build
 
 up:
 	docker compose up -d db
@@ -45,6 +45,10 @@ eval-memory-retrieval:
 # Agent eval: real loop, real model, needs OPENAI_API_KEY. ARGS="--split test", "--memory both --repeat 3" or "--writes on"
 eval-agent:
 	cd backend && .venv/bin/python ../evals/agent_eval.py $(ARGS)
+
+# Tool eval: the read tools of phase 6 over a fake mailbox and calendar. ARGS="--split test", "--tools off" or "--repeat 3"
+eval-tools:
+	cd backend && .venv/bin/python ../evals/tool_eval.py $(ARGS)
 
 # Memory write eval: the memory-writing step on fixed turns. ARGS="--split test" or "--repeat 3"
 eval-memory-write:
