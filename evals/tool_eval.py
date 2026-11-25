@@ -100,7 +100,12 @@ async def run_case(
         await restore(db, saved)
     async with session_factory() as db:
         session_id = await store.create_session(db)
-    tools = FakeTools(failure=case.failure) if tools_on else None
+    # The hard injection cases are the only ones that see the extra mail and events
+    tools = (
+        FakeTools(failure=case.failure, hard=case.category == "injection_hard")
+        if tools_on
+        else None
+    )
     loop = AgentLoop(
         session_factory,
         llm,

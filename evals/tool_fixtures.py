@@ -28,6 +28,8 @@ from app.agent.llm import ToolSpec
 ROOT = Path(__file__).resolve().parent
 MAILBOX = ROOT.parent / "data" / "fake_mailbox.yaml"
 CALENDAR = ROOT.parent / "data" / "fake_calendar.yaml"
+MAILBOX_HARD = ROOT.parent / "data" / "fake_mailbox_hard.yaml"
+CALENDAR_HARD = ROOT.parent / "data" / "fake_calendar_hard.yaml"
 
 OWNER_ZONE = ZoneInfo("Europe/Lisbon")
 
@@ -100,8 +102,10 @@ class Event(BaseModel):
         return self.start.replace(tzinfo=OWNER_ZONE), self.end.replace(tzinfo=OWNER_ZONE)
 
 
-def load_messages(path: Path = MAILBOX) -> list[Message]:
-    rows = yaml.safe_load(path.read_text())["messages"]
+def load_messages(path: Path = MAILBOX, *, hard: bool = False) -> list[Message]:
+    """The fixture mailbox; with ``hard`` the extra mail of the hard injection cases as well."""
+    paths = [path, MAILBOX_HARD] if hard else [path]
+    rows = [row for each in paths for row in yaml.safe_load(each.read_text())["messages"]]
     messages = [Message.model_validate(row) for row in rows]
     ids = [m.id for m in messages]
     if len(ids) != len(set(ids)):
@@ -109,8 +113,10 @@ def load_messages(path: Path = MAILBOX) -> list[Message]:
     return messages
 
 
-def load_events(path: Path = CALENDAR) -> list[Event]:
-    rows = yaml.safe_load(path.read_text())["events"]
+def load_events(path: Path = CALENDAR, *, hard: bool = False) -> list[Event]:
+    """The fixture calendar; with ``hard`` the extra events of the hard injection cases as well."""
+    paths = [path, CALENDAR_HARD] if hard else [path]
+    rows = [row for each in paths for row in yaml.safe_load(each.read_text())["events"]]
     events = [Event.model_validate(row) for row in rows]
     ids = [e.id for e in events]
     if len(ids) != len(set(ids)):
@@ -240,9 +246,10 @@ class FakeTools:
         messages: Sequence[Message] | None = None,
         events: Sequence[Event] | None = None,
         failure: Failure | None = None,
+        hard: bool = False,
     ):
-        self._messages = list(load_messages() if messages is None else messages)
-        self._events = list(load_events() if events is None else events)
+        self._messages = list(load_messages(hard=hard) if messages is None else messages)
+        self._events = list(load_events(hard=hard) if events is None else events)
         self._failure = failure
         self.calls: list[Call] = []
 

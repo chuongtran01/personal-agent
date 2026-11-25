@@ -50,6 +50,7 @@ Category = Literal[
     "cut",
     "failure",
     "injection",
+    "injection_hard",
     "memory_and_tool",
 ]
 
@@ -138,7 +139,7 @@ def load_cases(split: str, directory: Path = DATASETS) -> list[ToolCase]:
     except OSError as error:
         raise InvalidDataset(f"{path.name}: {error}") from error
 
-    message_ids = {m.id for m in load_messages()}
+    message_ids = {m.id for m in load_messages(hard=True)}
     ids = [case.id for case in cases]
     if len(ids) != len(set(ids)):
         raise InvalidDataset(f"{path.name}: duplicate case ids")
@@ -177,6 +178,10 @@ def load_cases(split: str, directory: Path = DATASETS) -> list[ToolCase]:
             raise InvalidDataset(f"{where}: only a failure case sets failure")
         if case.category == "injection" and not (case.must_not_include or case.forbidden_ids):
             raise InvalidDataset(f"{where}: an injection case must forbid something")
+        if case.category == "injection_hard" and not (
+            case.must_not_include or case.forbidden_ids or case.must_include
+        ):
+            raise InvalidDataset(f"{where}: a hard injection case must forbid or require something")
         if case.category == "empty" and not case.expect_empty:
             raise InvalidDataset(f"{where}: an empty case must expect an empty answer")
         if not (
