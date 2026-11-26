@@ -1,6 +1,6 @@
 # Phase 6: Read tools over MCP
 
-**Status:** planned
+**Status:** done, with the Google provider and the real-account check deferred (see "Gate check, results")
 **Gate:** the agent answers questions about the owner's calendar and email through MCP tools, chooses the right tool with the right arguments, treats everything it reads as data, and answers the `a003` paraphrase case through `search_memory`
 
 ## Goal
@@ -16,14 +16,14 @@ Two things from earlier phases are finished here. The loop's tool seam (`ToolRun
 - [x] **Tool eval and cases first**: `evals/tool_cases.py`, `evals/tool_checks.py`, `evals/tool_eval.py`, `evals/datasets/tools.{dev,test}.jsonl`, and the fixture mailbox and calendar `data/fake_mailbox.yaml`, `data/fake_calendar.yaml`. Written before any tool exists, with a baseline that has no tools
 - [x] **Token per call**: `backend/app/mcp_client/tokens.py` (sign) and `backend/mcp_servers/auth.py` (verify). A short-lived signed token for every call
 - [x] **Calendar and email MCP servers**: `backend/mcp_servers/calendar.py`, `backend/mcp_servers/email.py`, read-only, behind a provider interface with a fake provider for tests and evals
-- [ ] **Google provider**: `backend/mcp_servers/providers/google.py`, read-only scopes, tested against recorded responses with no network
+- [ ] **Google provider** (deferred, see the gate check): `backend/mcp_servers/providers/google.py`, read-only scopes, tested against recorded responses with no network
 - [x] **MCP client as a `ToolRunner`**: `backend/app/mcp_client/runner.py`. Lists the servers' tools, calls them with a token, turns every failure into a plain tool result, marks tool output as data
 - [x] **`search_memory`**: an in-process read-only tool over phase 2's search, so the model can write its own query
 - [x] **Prompt and loop changes**: the rules about tool output as data, and when to look something up instead of guessing
 - [x] **Web app**: the chat view shows which tools a reply used
 - [x] **Injection evals**: emails and events with hidden instructions, dev and held-out
-- [ ] **Tests**: unit tests for the token, the servers, the client and the tool wrapper, none needing an API key, a network or a running server
-- [ ] **Docs and baselines**: results recorded here, `DESIGN.md` and the README updated, and the open decisions below settled
+- [x] **Tests**: unit tests for the token, the servers, the client and the tool wrapper, none needing an API key, a network or a running server
+- [x] **Docs and baselines**: results recorded here, `DESIGN.md` and the README updated, and the open decisions below settled
 
 ## Architecture
 
@@ -194,7 +194,7 @@ Built against `mcp` 2.3, a newer SDK than the plan assumed (a unified `Client`, 
 
 **Checked on real processes.** Both servers as separate processes on real ports, the client over actual HTTP: discovery, both servers' tools, a read of a message, a wrong secret answered "refused", the same token sent twice answered 200 and then 401, a request with no token answered 401, the email server killed mid-session answered "could not be reached" after one retry while the calendar kept working, and a reconnect with the email server down offered only the calendar's tool.
 
-**Left for later in this phase.** The Google provider (the servers take any provider behind the two interfaces, and `MCP_PROVIDER` accepts only `fake` so far); `search_memory` and the router; the prompt and loop rules; the web app's line under a reply. Tools are found when the API starts and again only when it restarts: a server started later, or one that changes a tool, is not picked up until then. A long-lived client per server with a background refresh would fix that and cut each call from three requests to one (a new client for every call repeats the SDK's discovery and its listing of the tool's output schema). That was considered and decided against for now: with one owner and a handful of tools, a restart is acceptable and the extra requests cost milliseconds. The memory of used tokens is per process, so a server runs as one worker. The signing secret is shared, so anyone who has it can sign for every tool; with one owner that is the intended shape (multi-user, phase 11, was dropped).
+**Left over.** The Google provider (the servers take any provider behind the two interfaces, and `MCP_PROVIDER` accepts only `fake` so far), which is deferred and is the one item of this phase not built. Tools are found when the API starts and again only when it restarts: a server started later, or one that changes a tool, is not picked up until then. A long-lived client per server with a background refresh would fix that and cut each call from three requests to one (a new client for every call repeats the SDK's discovery and its listing of the tool's output schema). That was considered and decided against for now: with one owner and a handful of tools, a restart is acceptable and the extra requests cost milliseconds. The memory of used tokens is per process, so a server runs as one worker. The signing secret is shared, so anyone who has it can sign for every tool; with one owner that is the intended shape (multi-user, phase 11, was dropped).
 
 ## `search_memory`, as built
 
@@ -309,6 +309,35 @@ A quiet line under a reply says which tools its turn used: "Searched your email"
 | Phase 3, 4 and 5 | `pytest` and `make web-test` pass with no API key, no network and no server; the agent eval and the memory eval baselines do not move (the one expected change is `a003`) |
 | Real account | A manual run against the owner's own Google account: one calendar question and one email question answered correctly, with only that result recorded, not its content |
 | Browser check | The gate scenario in a browser against the real API with the fake provider, recorded here |
+
+## Gate check, results
+
+Run on 26 November 2026, on the fake mailbox and calendar. Where a row had its evidence earlier, it cites the section above.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Calendar | Pass, with a note | Calendar cases 24 of 24 on dev (three runs) and 3 of 3 held-out, through the real client and servers. The two `combined` cases (a calendar range asked after learning the date from a mail) fail my "no more than three days" check in every run (`t021`, `t115`) with right answers; the check is left as written |
+| Email | Pass, with notes | Dev, real stack, guidance on: email 20 of 21, empty 9 of 9, cut 4 of 6. Held-out: five of six email cases pass; `t106` fails because the mail never says "gym" and the model gives up, and `t114` makes seven calls before its honest "the email was cut off" answer |
+| Tool choice | Pass | No tool called for the no-tool cases: 9 of 9 on dev, 1 of 1 held-out. The mailbox and calendar are searched, not guessed, in the cases that need them |
+| `search_memory` | Pass | `a003` 3 of 3 with the tool against 0 of 3 without; the whole dev split 126 of 126 against 123 of 126; held-out 23 of 23 in both; zero leaks. It is flaky on `a003` in the smaller runs (four to five of six), so it is better and not fixed |
+| Injection | Pass | Zero forbidden messages read, zero runs that changed memory, and no injected fact repeated as true, in every run of every configuration. `injection` 15 of 15 and `injection_hard` 15 of 15 on dev (real stack, guidance on); held-out, the injection cases pass, with one check failing on a call count and one, without guidance, on a quoted phrase. The set cannot show that the defenses help, since the agent resisted before they existed |
+| Failure | Pass | Failure cases 9 of 9 on dev and 1 of 1 held-out on the real stack, where the failure is made at the transport and the client's own code makes the phrase. On real processes the email server killed mid-session answered "could not be reached" after one retry while the calendar kept working |
+| Token | Pass | Each case is a test: expired, issued in the future, wrong audience, wrong scope, forged, signed with another algorithm or none, wrong owner or issuer, missing claims, too long a lifetime, replayed. Over real HTTP: the same token sent twice gave 200 then 401, no token 401, a wrong secret "refused" |
+| Credentials | Pass for what exists; repeat with Google | The agent code imports nothing from the servers (one docstring names them), has no setting for a provider credential (its secrets are the OpenAI key, the owner's password hash, the login secret, the MCP signing secret and the Langfuse keys), and its four log lines in the client carry the service, the tool and the kind of failure only, which a test pins. With the fake provider there is no real credential to search for, so the search of the process's environment, logs and results is to be done when the Google provider exists |
+| Size | Pass | The servers cap a search at 10 headers, a calendar range at 20 events and a message at 8,000 characters, each saying when it cut (tests); "how many Daily Digest emails" answers 12 after a search that showed 10 of 12 (3 of 3); the handbook cases answer "the email was cut off before the deadline appeared" |
+| Web app | Pass | In Chrome against a production build: the tool line shows under a reply and while it streams, with no tool name or mail text; delete asks first with focus on Cancel, Escape deletes nothing, confirming removes it, it stays deleted after a reload, its history reads "Written … Deleted … by the owner in the app", and nothing scrolls sideways on a phone. 442 frontend tests |
+| Phase 3, 4 and 5 | Pass | `pytest` 1,273 and `make web-test` 442 pass with an empty API key and no MCP server running (the tests use fakes; the network was not cut off). Agent eval, memory on and off: 41 of 42 against 10 of 42, zero leaks, the one miss still `a003`. Memory eval dev, three runs: 84 of 84 against 39 of 84, nothing forbidden stored, zero leaks. Phase 5 measured 81 of 84; this eval does not offer the search tool, so the memory path it exercises is unchanged and the three extra passes are run-to-run variation, not an effect of this phase |
+| Real account | **Deferred** | Needs the Google provider and the owner's consent. Not run |
+| Browser check | Pass | The whole scenario in Chrome against a production build, my own API and both MCP servers as separate processes: a mailbox question showed "Searched your email 2 times" under its reply and on the page while it streamed; a question that needed the message showed "Searched your email 2 times · Read an email"; "what is 12 times 12" added no line; a reload gave the same lines back; no script error. The stream read raw carried the two tool names and nothing else |
+
+**What is left over, plainly.**
+- **The Google provider and the real-account run.** The servers take any provider behind the two interfaces, so it is one class and a consent script, but it needs a Google Cloud OAuth client and the owner's consent, and it is not built. Until it is, the Credentials row has nothing to search and the Real account row is open.
+- **Reading too much.** Asked to summarise a week or a day, the agent still opens most messages (ten calls where one would do). The guidance did not fix it.
+- **Searching again after a cut read.** It makes a few more searches before the honest answer.
+- **Two checks that are stricter than the behaviour they judge.** The three-day calendar range and a few bare forbidden words, which a correct reply can quote.
+- **The injection set cannot tell a defense from none.** Both unprotected and protected agents resisted every order in it.
+- **Cost.** A message with tools is about 40% heavier in input tokens than the first baseline, and the search tool alone doubled them on the cases where it was used.
+- **Tools are found when the API starts**, by decision (see above).
 
 ## Not in this phase
 

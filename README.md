@@ -4,7 +4,7 @@ A personal assistant for one person that **remembers**. It keeps facts, preferen
 
 No agent framework: the loop, the memory and the rules are written by hand, so every step is visible and testable. Rules live in code, not in the prompt. Evals are written before the code they measure.
 
-> **Work in progress.** It is built in phases, each ending in a gate that has to pass before the next starts. Phases 1 to 5 are done; phase 6 (calendar and email over MCP, read-only) is next. The plan is in [`docs/DESIGN.md`](docs/DESIGN.md).
+> **Work in progress.** It is built in phases, each ending in a gate that has to pass before the next starts. Phases 1 to 6 are done (the Google provider of phase 6 is deferred, so the mailbox and calendar are a made-up fake for now); phase 7 (writes with confirmation) is next. The plan is in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Status
 
@@ -15,7 +15,8 @@ No agent framework: the loop, the memory and the rules are written by hand, so e
 | 3 | Agent loop and API: recall before each reply, owner login, streaming API, agent evals | done |
 | 4 | Web app: login, chats, streaming chat view, recalled memories, memory list | done |
 | 5 | Memory writes: extraction, update, forget, delete and history in the web app | done |
-| 6 to 7 | Calendar and email over MCP, writes with confirmation | planned |
+| 6 | Read tools over MCP: a mailbox and a calendar behind signed servers, the model's own memory search, guidance for tools, a tool line in the chat | done (Google provider deferred) |
+| 7 | Writes with confirmation | planned |
 | 8 | Chat compaction | planned |
 | 9 | Full evals, tracing, polish | planned |
 | 10 | Terminal client | planned |
@@ -28,6 +29,7 @@ No agent framework: the loop, the memory and the rules are written by hand, so e
 - **A streaming API** behind a single-owner login (argon2 password hash, signed token): chats, messages as server-sent events, and a memory list with delete and a history for each memory.
 - **A web app** built on Next.js, Tailwind and shadcn/ui: login, a chat list and a streaming chat view that shows which memories each reply recalled, and a memory list by status where a memory can be deleted and its history read.
 - **An agent that learns.** After each reply a background step decides what the owner said that is worth keeping and writes it: a stated fact is remembered in the next chat, a changed one replaces the old one (and stays as history), a request to forget stops it being used, and anything that looks like a card number, password or key is filtered out in code before it is written. Text that came from outside (an email, an event) does not reach the step that decides what to remember, which reads only the words of the chat, and the injection tests found nothing stored from it. The owner can delete a memory in the web app and read why each one exists; to correct one they tell the assistant.
+- **An agent that looks things up.** The agent reads a mailbox and a calendar through MCP tools served by two separate processes. Every request carries its own short-lived signed token, made for one tool and usable once, and the agent holds no provider credential. What a tool returns is wrapped and labelled as outside text, a failing server is a plain sentence and never an error, and the model can search its own memory with a query it writes, for what the automatic recall missed. The chat says which tools a reply used, by name and never with their text. The mailbox and calendar are made up so far: the Google provider is not built.
 
 ## How memory is written
 
@@ -67,6 +69,19 @@ Stories over several chat sessions, the clock moved between them, from an empty 
 
 The stories that need a learned fact pass 42 of 45 on dev and 5 of 6 on test with memory on, and none with it off. The write path alone (extract, filter, reconcile) passed 111 of 111 dev runs and 17 of 17 test cases. Of the four misses, three were checks that were too strict for a correct reply, and one is a real weakness: "I joined Globex" replaces the old job only about one time in ten, because the reconciler keeps both when unsure.
 
+### Read tools (phase 6)
+
+Questions about a made-up mailbox and calendar, played through the real MCP client and servers, with failing servers and emails that give the agent orders. The same caveats: small hand-written sets, one fake owner, dev tuned on and the test split read once. Details and the misses are in [`docs/PHASE6.md`](docs/PHASE6.md).
+
+| Tool eval, tools on | First baseline (stand-in tools) | Real client and servers, with guidance |
+| --- | --- | --- |
+| Dev, 3 runs (117 played) | 106 passed | 111 passed |
+| Test, 1 run (20 cases) | 15 passed | 16 passed |
+| Turns that ended in a step-limit error | 3 | 0 |
+| Messages read that were forbidden, memories changed, memories leaked into a prompt | 0 | 0 |
+
+With the tools off, the first 34 dev cases pass 9 of 102: it says it cannot look. The model's memory search fixed the known recall miss on the dev split (`a003`, 0 of 3 to 3 of 3, no other case worse, 126 of 126 against 123 of 126). What did not improve: the agent still opens most messages to summarise a week, and the injection cases cannot tell a defense from none, because the agent resisted every order with or without one.
+
 ## Run it
 
 You need Docker, Python 3.12 or later, Node 22 or later and an OpenAI API key.
@@ -84,6 +99,11 @@ cd backend && .venv/bin/python -m app.auth secret    # JWT_SECRET
 
 make api                      # the API on :8000
 make web                      # the web app on :3000 (forwards /api to the API)
+
+# optional, the tools (a made-up mailbox and calendar): set MCP_SIGNING_SECRET, MCP_EMAIL_URL and
+# MCP_CALENDAR_URL in .env first (see .env.example), then start each server in its own terminal
+make mcp-email                # on :8101
+make mcp-calendar             # on :8102
 ```
 
 ## Commands
@@ -96,6 +116,8 @@ make web                      # the web app on :3000 (forwards /api to the API)
 | `make eval-memory ARGS="--memory both --repeat 3"` | End-to-end memory eval: stories over several sessions through the real agent, memory on and off (some cents of API use) |
 | `make eval-agent ARGS="--memory both --repeat 3"` | Agent eval on the real loop, memory on and off (a few cents of API use); `--writes on` lets the agent learn, restoring the seeded memory before every case |
 | `make eval-memory-write ARGS="--split test"` | Memory write eval: the write path (extract, filter, reconcile) on fixed turns, with a baseline that stores nothing and the extractor alone as other writers |
+| `make eval-tools ARGS="--stack real --guidance on --repeat 3"` | Tool eval: mailbox and calendar questions, failures and injections through the real MCP client and servers (in process, on a made-up mailbox); a baseline with no tools and a stand-in stack are the other arms |
+| `make mcp-email`, `make mcp-calendar` | The MCP servers as their own processes on 127.0.0.1 (:8101, :8102), on the fake provider; they need `MCP_SIGNING_SECRET` in `.env`, and the API reaches them through `MCP_EMAIL_URL` and `MCP_CALENDAR_URL` |
 | `make hooks` | Turn on the git hooks: checks before a commit, tests and a production build before a push |
 
 ## Layout
@@ -110,4 +132,4 @@ docs/       DESIGN.md and one document per phase, written before the code
 
 ## Docs
 
-[`DESIGN.md`](docs/DESIGN.md) is the overview, the architecture and the roadmap. Each phase has its own plan, decisions and gate check: [1](docs/PHASE1.md), [2](docs/PHASE2.md), [3](docs/PHASE3.md), [4](docs/PHASE4.md), [5](docs/PHASE5.md) (in progress).
+[`DESIGN.md`](docs/DESIGN.md) is the overview, the architecture and the roadmap. Each phase has its own plan, decisions and gate check: [1](docs/PHASE1.md), [2](docs/PHASE2.md), [3](docs/PHASE3.md), [4](docs/PHASE4.md), [5](docs/PHASE5.md), [6](docs/PHASE6.md).
