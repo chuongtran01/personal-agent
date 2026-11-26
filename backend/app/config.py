@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     token_ttl_minutes: int = 720
 
+    # The MCP servers the agent reaches its tools through (docs/PHASE6.md). The secret signs the
+    # token each request carries and is shared with the servers (at least 32 characters, e.g.
+    # `python -m app.auth secret`); a URL left empty means that server is not used
+    mcp_signing_secret: str = ""
+    mcp_email_url: str = ""
+    mcp_calendar_url: str = ""
+    mcp_timeout_seconds: float = 10.0
+
     # Tracing to Langfuse. Both keys empty means no tracing. The base URL is the one for your
     # project's region; empty uses the SDK's default
     langfuse_public_key: str = ""

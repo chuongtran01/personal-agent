@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.build import build_tools
 from app.api import auth as auth_api
 from app.api import memories as memories_api
 from app.api import sessions as sessions_api
@@ -15,6 +16,10 @@ from app.db import engine, get_session
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    tools = build_tools()  # raises on a configured server with no usable secret
+    if tools is not None:
+        await tools.connect()  # a server that is down costs only its own tools
+    app.state.tools = tools
     yield
     # A turn still running at shutdown is cancelled; its owner message stays saved
     for task in list(app.state.turns):
@@ -35,6 +40,7 @@ def create_app(docs: bool) -> FastAPI:
         openapi_url="/openapi.json" if docs else None,
     )
     app.state.agent = None  # built on first use, see api.deps.get_agent
+    app.state.tools = None  # the MCP client, set up when the server starts
     app.state.turns = set()  # running turns, kept so they are not garbage collected
     app.include_router(auth_api.router)
     app.include_router(sessions_api.router)

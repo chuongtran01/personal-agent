@@ -1,4 +1,4 @@
-.PHONY: up down db-reset migrate seed install hooks test lint eval-memory eval-memory-retrieval eval-agent eval-memory-write eval-tools api web-install web web-lint web-test web-build
+.PHONY: up down db-reset migrate seed install hooks test lint eval-memory eval-memory-retrieval eval-agent eval-memory-write eval-tools mcp-email mcp-calendar api web-install web web-lint web-test web-build
 
 up:
 	docker compose up -d db
@@ -15,6 +15,15 @@ migrate:
 # The API on :8000, reloading on changes. Needs the database (make up) and the settings in .env
 api:
 	cd backend && .venv/bin/uvicorn app.main:app --reload
+
+# The MCP servers, each its own process on 127.0.0.1 (email :8101, calendar :8102). They need
+# MCP_SIGNING_SECRET in .env, the same one the API signs its tokens with; MCP_PROVIDER=fake serves a
+# made-up mailbox and calendar. Point the API at them with MCP_EMAIL_URL and MCP_CALENDAR_URL
+mcp-email:
+	cd backend && .venv/bin/python -m mcp_servers email
+
+mcp-calendar:
+	cd backend && .venv/bin/python -m mcp_servers calendar
 
 # Load the seed memories (needs OPENAI_API_KEY); ARGS=--reset empties the memory tables first
 seed:

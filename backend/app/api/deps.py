@@ -40,7 +40,7 @@ def get_agent(request: Request) -> AgentLoop:
     state = request.app.state
     if state.agent is None:
         try:
-            state.agent = build_agent()
+            state.agent = build_agent(tools=state.tools)
         except RuntimeError as error:
             log.error("the agent cannot start: %s", error)
             raise HTTPException(503, "the agent is not configured") from None
