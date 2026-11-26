@@ -19,7 +19,7 @@ The new problem is memory. A support agent forgets everything between chats, and
 
 **Non-goals**
 
-- More than one user, sharing, or multi-tenant hardening, until the optional last phase (11). Phases 1 to 10 are built for one owner and one set of credentials.
+- More than one user, sharing, or multi-tenant hardening. The app is for one owner and one set of credentials. Phase 11 (multi-user) was planned as optional and dropped on 26 November 2026.
 - Acting without the owner's confirmation on anything that sends, deletes or spends.
 - Voice, mobile apps or other channels. One chat surface.
 - Training or fine-tuning models, or a vector database service of its own. Memory lives in Postgres.
@@ -154,7 +154,7 @@ The model answers differently each time, so each dev run is repeated three times
 
 ## Development roadmap
 
-Twelve phases, each ending in a gate that must pass before the next starts. Docs for a phase are written before its code. Phase 12 was added last, so its number is not its place in the order of work: it needs the tools of phase 6 and the confirmation of phase 7, and is built after them.
+Twelve phases were planned, each ending in a gate that must pass before the next starts; phase 11 was dropped (see its row). Docs for a phase are written before its code. Phase 12 was added last, so its number is not its place in the order of work: it needs the tools of phase 6 and the confirmation of phase 7, and is built after them.
 
 | # | Phase | Deliverables | Gate |
 | --- | --- | --- | --- |
@@ -168,7 +168,7 @@ Twelve phases, each ending in a gate that must pass before the next starts. Docs
 | 8 | Chat compaction | A stored summary replaces old messages in the prompt once the token budget is passed; originals kept; pending confirmations and tool output kept intact or labelled as data | Compaction evals keep early facts and instructions, never drop a pending confirmation, and cut prompt tokens |
 | 9 | Evals, tracing and polish | Full evals, the memory ablation, Langfuse, README, demo | Numbers in the README |
 | 10 | Terminal client | `app/cli.py`, `make chat`: login, streaming reply, memories used, `/memories`; a second client of the same API | The terminal client completes a chat against the running API |
-| 11 | Multi-user | Users table, `owner_id` on every table and query, signup and login per user, per-user Google connections and MCP tokens, cross-user leak evals | A user's memory, chats and tool results never reach another user's prompt, API response or tool call |
+| 11 | Multi-user (dropped) | Was: a users table, `owner_id` on every table and query, signup and login per user, per-user Google connections and MCP tokens, cross-user leak evals. Not planned: the app is for one owner | None. The number is not reused |
 | 12 | Memory management by chat | `change_memory` and `forget_memory` behind the loop's tool seam: each names the exact memory (found with phase 6's `search_memory`), shows the change in words and waits for the owner's confirmation (phase 7's gate) before it is applied; the result is known in the same turn, so the reply says what really changed; the background write path keeps handling what the owner simply states | A change or a request to forget in chat is applied to exactly the memory the owner was shown, and only after a matching confirmation; the reply never claims a change that did not happen; an instruction inside tool output or an email never changes memory; the cases that work through the background path keep passing |
 
 ## Risks and open decisions
@@ -184,6 +184,7 @@ Twelve phases, each ending in a gate that must pass before the next starts. Docs
 | Prompt injection through email stored as memory | Risk | `source_kind`; no owner-level write from external text; injection evals before any write tool exists |
 | The model confirming its own action | Risk | Confirmation is checked in code from the owner's own message |
 | Sensitive data stored in memory | Risk | A trap in the eval set, and a filter before write; the memory viewer lets the owner delete anything |
+| Multi-user | Decided: dropped | The app is for one owner. So the single-worker design (the busy-chat set, the memory write queue, each MCP server's memory of used tokens) and the one shared signing secret are choices to keep, not limits to remove |
 | A model changing memory through a tool (phase 12) | Risk | The same confirmation as any outside write: the change names the exact memory and is shown in words; only the owner's own matching reply applies it; tool output and email text can never authorize a change; the filter and the event log apply as on every write |
 | Memory tools and the background write path writing the same thing twice (phase 12) | Open decision | Skip the background extraction for a turn in which a memory tool changed memory, or let reconciliation treat the second write as a repeat; decide with the evals |
 | Double send after a lost answer | Risk | Idempotency key and `unknown` handling, plus a test that forces a lost answer after the write |

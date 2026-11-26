@@ -62,7 +62,7 @@ Each call carries `Authorization: Bearer <token>`, a JWT signed with a shared se
 - A server rejects a token that is expired, for another audience or scope, badly signed, or whose `jti` it has already seen inside its lifetime.
 - Nothing about the provider is in the token. The server maps the owner to its own credentials.
 
-This is deliberately small. With one owner the token proves "this came from the agent, for this tool, just now"; phase 11 adds a real user in `sub` and per-user connections without changing the shape.
+This is deliberately small. With one owner the token proves "this came from the agent, for this tool, just now"; it would carry a real user in `sub` if the app ever had more than one, without changing the shape.
 
 ### Tool output is data
 
@@ -194,7 +194,7 @@ Built against `mcp` 2.3, a newer SDK than the plan assumed (a unified `Client`, 
 
 **Checked on real processes.** Both servers as separate processes on real ports, the client over actual HTTP: discovery, both servers' tools, a read of a message, a wrong secret answered "refused", the same token sent twice answered 200 and then 401, a request with no token answered 401, the email server killed mid-session answered "could not be reached" after one retry while the calendar kept working, and a reconnect with the email server down offered only the calendar's tool.
 
-**Left for later in this phase.** The Google provider (the servers take any provider behind the two interfaces, and `MCP_PROVIDER` accepts only `fake` so far); `search_memory` and the router; the prompt and loop rules; the web app's line under a reply. Tools are found when the API starts and again only when it restarts: a server started later, or one that changes a tool, is not picked up until then. A long-lived client per server with a background refresh would fix that and cut each call from three requests to one (a new client for every call repeats the SDK's discovery and its listing of the tool's output schema). That was considered and decided against for now: with one owner and a handful of tools, a restart is acceptable and the extra requests cost milliseconds. The memory of used tokens is per process, so a server runs as one worker. The signing secret is shared, so anyone who has it can sign for every tool; per-user secrets and keys come with phase 11.
+**Left for later in this phase.** The Google provider (the servers take any provider behind the two interfaces, and `MCP_PROVIDER` accepts only `fake` so far); `search_memory` and the router; the prompt and loop rules; the web app's line under a reply. Tools are found when the API starts and again only when it restarts: a server started later, or one that changes a tool, is not picked up until then. A long-lived client per server with a background refresh would fix that and cut each call from three requests to one (a new client for every call repeats the SDK's discovery and its listing of the tool's output schema). That was considered and decided against for now: with one owner and a handful of tools, a restart is acceptable and the extra requests cost milliseconds. The memory of used tokens is per process, so a server runs as one worker. The signing secret is shared, so anyone who has it can sign for every tool; with one owner that is the intended shape (multi-user, phase 11, was dropped).
 
 ## `search_memory`, as built
 
@@ -314,7 +314,7 @@ A quiet line under a reply says which tools its turn used: "Searched your email"
 
 - Any tool that changes something outside the agent: creating or moving an event, drafting or sending mail (phase 7).
 - Confirmation, idempotency keys and `unknown` outcomes. They exist only for writes, so they are built with the first write tool.
-- Per-user connections and tokens (phase 11).
+- Per-user connections and tokens: not planned (the app is for one owner).
 - Microsoft, other providers, attachments, a mailbox search that reads every message, and searching the web.
 - Summarising a long tool result for the model, and compaction of long chats (phase 8).
 - Letting the owner change or forget a memory by chat tool (phase 12; it will use `search_memory` to find the memory).

@@ -249,7 +249,7 @@ Run on 30 October 2026 against the real API and the real model, in Chrome, drive
 - Compacting a long chat: phase 8; until then the 100-message cap shows as "chat full"
 - Tracing, the README demo and an automated browser test: phase 9
 - A terminal client: phase 10
-- Sign-up, several users and per-user data: phase 11
+- Sign-up, several users and per-user data: not planned (phase 11 was dropped; the app is for one owner)
 - A theme toggle, custom branding or a design system of our own beyond the shadcn defaults
 - Deleting, renaming or searching chats, regenerating or editing a sent message, and attachments or voice
 - Hosting: where `next start` runs, HTTPS and a production build pipeline

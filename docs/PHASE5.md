@@ -452,4 +452,4 @@ Run on 3 November 2026. Where a row had no direct evidence before, it was run fo
 - A retry queue for failed extraction, or a write queue shared across several server workers
 - Real-time updates of the memory list while a chat is open
 - Editing a memory or restoring a deleted one in the app: both were built and removed (see above), and erasing the text of a deleted memory for good stays a later question
-- Multi-user: phase 11
+- Multi-user: not planned (phase 11 was dropped; the app is for one owner)

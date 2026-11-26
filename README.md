@@ -18,7 +18,7 @@ No agent framework: the loop, the memory and the rules are written by hand, so e
 | 6 to 7 | Calendar and email over MCP, writes with confirmation | planned |
 | 8 | Chat compaction | planned |
 | 9 | Full evals, tracing, polish | planned |
-| 10 to 11 | Terminal client; optional multi-user | planned |
+| 10 | Terminal client | planned |
 | 12 | Memory management by chat: inspect and change memories by asking, with confirmation | planned (built after 7) |
 
 ## What works today
