@@ -31,6 +31,7 @@ const stored = (id: number, role: "user" | "assistant", text: string): ChatMessa
   text,
   created_at: "2026-10-30T09:00:00Z",
   memories: [],
+  tools: [],
 });
 
 const routes = (table: Record<string, Handler>) => routeFetch(fetchMock, table);

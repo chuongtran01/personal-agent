@@ -29,6 +29,9 @@ export interface ChatMessage {
   created_at: string;
   /** null for a reply stored before recall was kept: not recorded, which is not "nothing matched" */
   memories: RecalledMemory[] | null;
+  /** The tools the reply's turn used, by name, in order and with repeats; never what they were
+   *  asked or returned. Empty for the owner's messages, null for a reply stored before this was kept */
+  tools: string[] | null;
 }
 
 export interface ChatSummary {
@@ -76,6 +79,12 @@ export interface MemoryEvent {
   past: MemoryRef[];
 }
 
+/** The model is using a tool. Just its name: what it was asked and what it returned stay out. */
+export interface ToolEvent {
+  type: "tool";
+  name: string;
+}
+
 export interface TextEvent {
   type: "text";
   text: string;
@@ -97,4 +106,4 @@ export interface ErrorEvent {
   message: string;
 }
 
-export type StreamEvent = MemoryEvent | TextEvent | DoneEvent | ErrorEvent;
+export type StreamEvent = MemoryEvent | ToolEvent | TextEvent | DoneEvent | ErrorEvent;

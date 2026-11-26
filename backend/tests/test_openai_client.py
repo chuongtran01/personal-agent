@@ -381,3 +381,17 @@ async def test_generate_sorts_provider_failures_like_stream_does():
         await generate(client)
 
     assert raised.value.retryable is True
+
+
+def test_which_tools_a_turn_used_never_reaches_the_model():
+    items = to_input(
+        [
+            UserMessage(text="hi"),
+            AssistantMessage(
+                text="done", recalled=(1,), recalled_past=(), tools_used=("email_read",)
+            ),
+        ]
+    )
+
+    assert items == [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "done"}]
+    assert "email_read" not in repr(items) and "tools_used" not in repr(items)

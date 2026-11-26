@@ -20,7 +20,7 @@ Two things from earlier phases are finished here. The loop's tool seam (`ToolRun
 - [x] **MCP client as a `ToolRunner`**: `backend/app/mcp_client/runner.py`. Lists the servers' tools, calls them with a token, turns every failure into a plain tool result, marks tool output as data
 - [x] **`search_memory`**: an in-process read-only tool over phase 2's search, so the model can write its own query
 - [x] **Prompt and loop changes**: the rules about tool output as data, and when to look something up instead of guessing
-- [ ] **Web app**: the chat view shows which tools a reply used
+- [x] **Web app**: the chat view shows which tools a reply used
 - [x] **Injection evals**: emails and events with hidden instructions, dev and held-out
 - [ ] **Tests**: unit tests for the token, the servers, the client and the tool wrapper, none needing an API key, a network or a running server
 - [ ] **Docs and baselines**: results recorded here, `DESIGN.md` and the README updated, and the open decisions below settled
@@ -261,6 +261,16 @@ Two changes, behind one flag (`tool_guidance` on the loop; the server sets it wh
 **The cost.** About 650 more input tokens a message than the wrapper alone, because the section is in every call of a turn with tools; the median time did not move. Against the first baseline a message with tools is now about 40% heavier.
 
 **Checked.** Ten deliberate bugs in the last-step and guidance logic (never taking the last step, taking it without guidance, offering the tools on it, leaving out the note, noting it on every step, losing the tools of a one-step loop, counting the loop's own tool as outside, ignoring the flag, leaving the section out of the prompt) were caught by a test each; one survived the first time, so a test was added for a runner whose only tool has the loop's name, and the second time it was caught.
+
+## The web app's tool line, as built
+
+A quiet line under a reply says which tools its turn used: "Searched your email", "Read an email", "Looked at your calendar", "Searched memory", with a count when a tool was used more than once ("Searched your email 2 times · Read an email"). It is made from tool **names**; what a tool was asked and what it returned never reach the page.
+
+**On the way there.** The loop sends a `ToolUsed(name)` event as each call starts (the stream's `tool` frame, `{"name": "email_search"}` and nothing else), so the line appears while the reply is still being read. The reply that ends the turn stores the names it used in `tools_used`, in order and with repeats, as it already stores `recalled`, so a reloaded chat shows the same line. The messages API returns them as `tools`: a list for a reply, empty for the owner's messages, `null` for a reply stored before this was kept (the same "not recorded" as `memories`). Names reach neither the model nor the memory writer, and a test pins that the field is not in what is sent to the API. The words are in one place, `lib/tool-labels.ts`; a tool it has no words for is shown as "Used a tool", never by its raw name, and a name that is also a property of every object (`constructor`) is not taken for a known one.
+
+**What counts as used.** Every call the model made: the loop's own `search_memory`, a tool that failed, and a tool that does not exist (the model tried it). The line says what was tried, not what worked.
+
+**Checked.** Eleven deliberate bugs in the frontend (not keeping the names, losing them when the reply is done or the turn fails, not counting repeats, believing a property name, losing the order, not showing the line on a reply or on the live one, showing a raw name, ignoring the frame, trusting a frame with no name) were each caught by a test. In Chrome, against a production build, my own API and both MCP servers as separate processes: a mailbox question showed "Searched your email 2 times" under its reply and on the page while the reply was still streaming; a question that needed the message showed "Searched your email 2 times · Read an email"; "what is 12 times 12" added no line; a reload gave the same lines back; the lines held no tool name, id or mail text; no script error; no sideways scrolling at phone width. The stream itself was read raw: the `tool` frames carry the two names and the mail's amount appears only in the answer text.
 
 ## Decisions to settle before starting
 

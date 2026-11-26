@@ -31,6 +31,7 @@ const isString = (value: unknown) => typeof value === "string";
 // What each event must carry. Anything else is a stream the app cannot trust
 const SHAPES: Record<StreamEvent["type"], Record<string, (value: unknown) => boolean>> = {
   memory: { current: isList, past: isList },
+  tool: { name: isString },
   text: { text: isString },
   done: {
     message_id: isNumber,

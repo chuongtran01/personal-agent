@@ -18,9 +18,11 @@ const message = (
   text,
   created_at: "2026-10-30T09:00:00Z",
   memories,
+  tools: [],
 });
 const streaming = (overrides: Partial<ActiveTurn> = {}): ActiveTurn => ({
   memories: null,
+  tools: [],
   text: "",
   status: "streaming",
   error: null,
@@ -132,5 +134,43 @@ describe("a turn that failed", () => {
     await userEvent.click(screen.getByRole("button", { name: "Reload" }));
 
     expect(onReload).toHaveBeenCalledOnce();
+  });
+});
+
+describe("which tools a reply used", () => {
+  test("shows a line under the reply, and nothing of what the tools returned", () => {
+    view([{ ...message(2, "assistant", "It is 62.40."), tools: ["email_search", "email_read"] }]);
+
+    expect(screen.getByText("Searched your email · Read an email")).toBeInTheDocument();
+    expect(screen.getByRole("log").textContent).not.toMatch(/email_search|email_read/);
+  });
+
+  test("shows no line for a reply that used no tool or whose tools were not recorded", () => {
+    view([
+      message(2, "assistant", "hello"),
+      { ...message(3, "assistant", "older"), tools: null },
+    ]);
+
+    expect(screen.queryByText(/Searched|Read an email|Looked at/)).toBeNull();
+  });
+
+  test("shows it live, while the reply is still being read, before any text arrives", () => {
+    view([message(1, "user", "mail?")], streaming({ tools: ["email_search"] }));
+
+    expect(screen.getByText("Thinking…")).toBeInTheDocument();
+    expect(screen.getByText("Searched your email")).toBeInTheDocument();
+  });
+
+  test("puts the line between the reply and the memories it recalled", () => {
+    view([
+      {
+        ...message(2, "assistant", "Done.", [{ id: 1, kind: "fact", content: "x", past: false, status: "active" }]),
+        tools: ["search_memory"],
+      },
+    ]);
+
+    const log = screen.getByRole("log").textContent ?? "";
+    expect(log.indexOf("Done.")).toBeLessThan(log.indexOf("Searched memory"));
+    expect(log.indexOf("Searched memory")).toBeLessThan(log.indexOf("Recalled 1 memory"));
   });
 });

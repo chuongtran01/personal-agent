@@ -39,6 +39,10 @@ class AssistantMessage(_Frozen):
     # two must not be mixed up, or an old reply would be shown as having matched nothing
     recalled: tuple[int, ...] | None = None
     recalled_past: tuple[int, ...] | None = None
+    # The names of the tools used in the turn this message ends, in order and with repeats, kept so
+    # a chat can say which it used. Names only: never the arguments or what came back. None means
+    # "not recorded", as for ``recalled``
+    tools_used: tuple[str, ...] | None = None
 
 
 class ToolResultMessage(_Frozen):

@@ -7,6 +7,8 @@ import type { ChatMessage, MemoryRef, RecalledMemory, StreamEvent } from "@/api/
 export interface ActiveTurn {
   /** from the `memory` event, which arrives before the first word */
   memories: RecalledMemory[] | null;
+  /** the tools used so far, by name, from the `tool` events */
+  tools: string[];
   text: string;
   status: "streaming" | "failed";
   error: { code: string; message: string } | null;
@@ -52,11 +54,12 @@ export function startTurn(state: ChatState, text: string, now: Date): ChatState 
     text,
     created_at: now.toISOString(),
     memories: [],
+    tools: [],
   };
   return {
     ...state,
     messages: [...state.messages, question],
-    turn: { memories: null, text: "", status: "streaming", error: null },
+    turn: { memories: null, tools: [], text: "", status: "streaming", error: null },
   };
 }
 
@@ -74,6 +77,8 @@ export function applyEvent(state: ChatState, event: StreamEvent, now: Date): Cha
   switch (event.type) {
     case "memory":
       return { ...state, turn: { ...turn, memories: recalledFrom(event.current, event.past) } };
+    case "tool":
+      return { ...state, turn: { ...turn, tools: [...turn.tools, event.name] } };
     case "text":
       return { ...state, turn: { ...turn, text: turn.text + event.text } };
     case "done":
@@ -87,6 +92,7 @@ export function applyEvent(state: ChatState, event: StreamEvent, now: Date): Cha
             text: turn.text,
             created_at: now.toISOString(),
             memories: turn.memories ?? [],
+            tools: turn.tools,
           },
         ],
         turn: null,
@@ -95,7 +101,13 @@ export function applyEvent(state: ChatState, event: StreamEvent, now: Date): Cha
       // What was streamed is dropped: a failed turn stores no reply, and half an answer misleads
       return {
         ...state,
-        turn: { memories: turn.memories, text: "", status: "failed", error: { code: event.code, message: event.message } },
+        turn: {
+          memories: turn.memories,
+          tools: turn.tools,
+          text: "",
+          status: "failed",
+          error: { code: event.code, message: event.message },
+        },
       };
   }
 }

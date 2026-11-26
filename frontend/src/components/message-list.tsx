@@ -1,6 +1,7 @@
 import type { ChatMessage } from "@/api/types";
 import { Markdown } from "@/components/markdown";
 import { RecalledMemories } from "@/components/recalled-memories";
+import { ToolUse } from "@/components/tool-use";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { ActiveTurn } from "@/lib/chat-state";
@@ -17,6 +18,7 @@ function Reply({ message }: { message: ChatMessage }) {
   return (
     <div className="flex flex-col gap-2">
       <Markdown>{message.text}</Markdown>
+      <ToolUse names={message.tools} />
       <RecalledMemories memories={message.memories} />
     </div>
   );
@@ -43,6 +45,7 @@ function Pending({ turn, onReload }: { turn: ActiveTurn; onReload: () => void })
   return (
     <div className="flex flex-col gap-2" aria-busy="true">
       {turn.text ? <Markdown>{turn.text}</Markdown> : <p className="text-muted-foreground">Thinking…</p>}
+      <ToolUse names={turn.tools} />
       <RecalledMemories memories={turn.memories} />
     </div>
   );

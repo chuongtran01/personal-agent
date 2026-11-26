@@ -48,6 +48,9 @@ class MessageOut(BaseModel):
     created_at: datetime
     # None for a reply stored before recall was kept: "not recorded", which is not "nothing matched"
     memories: list[RecalledOut] | None
+    # The tools the reply's turn used, by name, in order with repeats. Never what they were asked or
+    # returned. None for a reply stored before this was kept; empty for the owner's messages
+    tools: list[str] | None
 
 
 class SendRequest(BaseModel):
@@ -117,9 +120,11 @@ def _view(row: store.StoredRow, found: dict[int, store.RecalledMemory]) -> dict:
         "text": message.text,
         "created_at": row.created_at,
         "memories": [],
+        "tools": [],
     }
     if not isinstance(message, AssistantMessage):
         return view
+    view["tools"] = None if message.tools_used is None else list(message.tools_used)
     if message.recalled is None and message.recalled_past is None:
         view["memories"] = None  # not recorded, which is not the same as nothing matched
         return view

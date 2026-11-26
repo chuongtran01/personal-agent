@@ -539,3 +539,74 @@ async def test_a_memory_is_not_created_or_changed_through_post_put_or_patch(clie
     for method in ("POST", "PUT", "PATCH"):
         response = await client.request(method, f"/memories/{first}", json={})
         assert response.status_code in (404, 405)
+
+
+# Which tools a reply used ------------------------------------------------------------------------
+
+
+async def test_a_tool_is_streamed_by_name_and_the_reloaded_chat_lists_the_names(
+    client, chat, session_factory
+):
+    class Lookup:
+        def specs(self):
+            from app.agent.llm import ToolSpec
+
+            return [ToolSpec("email_search", "Search", {"type": "object", "properties": {}})]
+
+        async def call(self, name, arguments):
+            return "<tool_result>private mail text</tool_result>"
+
+    from scripted_llm import tool_call
+
+    llm = ScriptedLLM(
+        tool_call("email_search", call_id="a", query="my secret query"),
+        tool_call("email_search", call_id="b", query="again"),
+        reply("Found it."),
+    )
+    loop = AgentLoop(
+        session_factory,
+        llm,
+        FakeEmbedder(),
+        tools=Lookup(),
+        clock=lambda: EVAL_NOW,
+        recall_mode="keyword",
+        retry_delay=0,
+    )
+    app.dependency_overrides[get_agent] = lambda: loop
+
+    events = await ask(client, chat, "Any mail?")
+    shown = (await client.get(f"/sessions/{chat}/messages")).json()
+
+    assert [d["name"] for n, d in events if n == "tool"] == ["email_search", "email_search"]
+    assert all(set(d) == {"name"} for n, d in events if n == "tool")
+    assert [m["tools"] for m in shown] == [[], ["email_search", "email_search"]]
+    body = json.dumps(events) + json.dumps(shown)
+    assert "my secret query" not in body and "private mail text" not in body
+
+
+async def test_a_reply_that_used_no_tool_lists_none(client, chat, agent_for):
+    agent_for(reply("hello"))
+
+    await ask(client, chat, "hi")
+    shown = (await client.get(f"/sessions/{chat}/messages")).json()
+
+    assert [m["tools"] for m in shown] == [[], []]
+
+
+async def test_a_reply_stored_before_the_names_were_kept_says_so_with_null(
+    client, chat, session_factory
+):
+    async with session_factory() as db:
+        sid = uuid.UUID(chat)
+        await store.append(db, sid, UserMessage(text="hi"))
+        await store.append(db, sid, AssistantMessage(text="hello", recalled=(), recalled_past=()))
+
+    user, answer = (await client.get(f"/sessions/{chat}/messages")).json()
+
+    assert user["tools"] == [] and answer["tools"] is None
+
+
+def test_the_tool_frame_carries_the_name_and_nothing_else():
+    from app.agent.loop import ToolUsed
+
+    assert sse.encode(ToolUsed("email_read")) == 'event: tool\ndata: {"name":"email_read"}\n\n'

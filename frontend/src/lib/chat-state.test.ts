@@ -39,6 +39,7 @@ const stored = (id: number, role: ChatMessage["role"], text: string): ChatMessag
   text,
   created_at: "2026-10-30T09:00:00Z",
   memories: [],
+  tools: [],
 });
 
 describe("a turn", () => {
@@ -46,9 +47,9 @@ describe("a turn", () => {
     const state = startTurn(NEW_CHAT, "Where do I live?", NOW);
 
     expect(state.messages).toHaveLength(1);
-    expect(state.messages[0]).toMatchObject({ role: "user", text: "Where do I live?", memories: [] });
+    expect(state.messages[0]).toMatchObject({ role: "user", text: "Where do I live?", memories: [], tools: [] });
     expect(state.messages[0].id).toBeLessThan(0);
-    expect(state.turn).toEqual({ memories: null, text: "", status: "streaming", error: null });
+    expect(state.turn).toEqual({ memories: null, tools: [], text: "", status: "streaming", error: null });
     expect(isBusy(state)).toBe(true);
   });
 
@@ -199,5 +200,44 @@ describe("recalledFrom", () => {
       [2, false],
       [3, true],
     ]);
+  });
+});
+
+describe("the tools a turn uses", () => {
+  const tool = (name: string): StreamEvent => ({ type: "tool", name });
+
+  test("are kept in order, with repeats, while the reply streams", () => {
+    const state = play(startTurn(NEW_CHAT, "mail?", NOW), tool("email_search"), tool("email_read"), tool("email_read"));
+
+    expect(state.turn?.tools).toEqual(["email_search", "email_read", "email_read"]);
+  });
+
+  test("go with the reply when it is done", () => {
+    const state = play(
+      startTurn(NEW_CHAT, "mail?", NOW),
+      tool("email_search"),
+      { type: "text", text: "Found it." },
+      DONE,
+    );
+
+    expect(state.messages.at(-1)).toMatchObject({ role: "assistant", text: "Found it.", tools: ["email_search"] });
+    expect(state.turn).toBeNull();
+  });
+
+  test("are none for a reply that used none", () => {
+    const state = play(startTurn(NEW_CHAT, "hi", NOW), { type: "text", text: "hello" }, DONE);
+
+    expect(state.messages.at(-1)?.tools).toEqual([]);
+  });
+
+  test("are kept when the turn fails, and a tool event after it changes nothing", () => {
+    const failed = play(startTurn(NEW_CHAT, "hi", NOW), tool("email_search"), { type: "error", code: "model_error", message: "x" });
+
+    expect(failed.turn?.tools).toEqual(["email_search"]);
+    expect(applyEvent(failed, tool("email_read"), NOW)).toBe(failed);
+  });
+
+  test("are ignored when no turn is open", () => {
+    expect(applyEvent(NEW_CHAT, tool("email_search"), NOW)).toBe(NEW_CHAT);
   });
 });

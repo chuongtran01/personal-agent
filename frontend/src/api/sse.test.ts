@@ -237,3 +237,25 @@ describe("an unreadable frame", () => {
     expect(events[0]).toMatchObject({ type: "error", code: "bad_stream" });
   });
 });
+
+describe("the tool event", () => {
+  test("carries the name of the tool and is read in order with the rest", async () => {
+    const stream =
+      frame("memory", { current: [], past: [] }) +
+      frame("tool", { name: "email_search" }) +
+      frame("tool", { name: "email_read" }) +
+      frame("text", { text: "ok" }) +
+      frame("done", DONE);
+
+    const events = await collect(bodyOf(encode(stream), 7));
+
+    expect(events.map((e) => e.type)).toEqual(["memory", "tool", "tool", "text", "done"]);
+    expect(events[1]).toEqual({ type: "tool", name: "email_search" });
+  });
+
+  test.each([[{}], [{ name: 5 }], [{ name: null }]])("a tool frame with %j cannot be trusted", async (data) => {
+    const events = await collect(bodyOf(encode(frame("tool", data) + frame("done", DONE))));
+
+    expect(events).toEqual([{ type: "error", code: "bad_stream", message: "The reply could not be read." }]);
+  });
+});

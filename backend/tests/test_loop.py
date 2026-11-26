@@ -17,6 +17,7 @@ from app.agent.loop import (
     MemoryRecalled,
     MessageTooLong,
     SessionNotFound,
+    ToolUsed,
     TurnError,
     TurnInProgress,
 )
@@ -78,9 +79,11 @@ def ids(results):
 
 
 def bare(message):
-    """A stored reply without the ids of what was recalled for it."""
+    """A stored reply without what was recalled for it or which tools its turn used."""
     if isinstance(message, AssistantMessage):
-        return message.model_copy(update={"recalled": None, "recalled_past": None})
+        return message.model_copy(
+            update={"recalled": None, "recalled_past": None, "tools_used": None}
+        )
     return message
 
 
@@ -103,7 +106,10 @@ async def test_a_turn_recalls_prompts_streams_and_stores_the_answer(session_fact
     assert await stored(session_factory, chat) == [
         UserMessage(text="Where does the owner live? Porto"),
         AssistantMessage(
-            text="You live in Porto.", recalled=ids(events[0].current), recalled_past=()
+            text="You live in Porto.",
+            recalled=ids(events[0].current),
+            recalled_past=(),
+            tools_used=(),
         ),
     ]
     (call,) = llm.calls
@@ -801,3 +807,75 @@ async def test_the_prompt_says_nothing_of_learning_when_there_is_no_writer(sessi
         "What you learn:" not in llm.calls[0].system
         and "saved automatically" not in llm.calls[0].system
     )
+
+
+# Which tools a turn used --------------------------------------------------------------------------
+
+
+async def test_each_tool_the_model_uses_is_announced_by_name_as_it_starts(session_factory, chat):
+    tools = FakeTools({"lookup": "a result"})
+    llm = ScriptedLLM(
+        tool_call("lookup", call_id="c1", query="a private query"),
+        tool_call("lookup", call_id="c2", query="another"),
+        reply("done"),
+    )
+
+    events = await play(make_loop(session_factory, llm, tools=tools), chat, "hi")
+
+    used = [e for e in events if isinstance(e, ToolUsed)]
+    assert [e.name for e in used] == ["lookup", "lookup"]
+    # Only the name: nothing the tool was asked or returned is in the stream
+    assert not any("a private query" in repr(e) or "a result" in repr(e) for e in events)
+    assert events.index(used[1]) < events.index(next(e for e in events if isinstance(e, TextDelta)))
+    assert isinstance(events[-1], AgentDone)
+
+
+async def test_the_reply_that_ends_the_turn_records_the_tools_used_in_order_with_repeats(
+    session_factory, chat
+):
+    tools = FakeTools({"lookup": "a result"})
+    llm = ScriptedLLM(
+        tool_call("lookup", call_id="c1"), tool_call("lookup", call_id="c2"), reply("done")
+    )
+
+    await play(make_loop(session_factory, llm, tools=tools), chat, "hi")
+
+    replies = [m for m in await stored(session_factory, chat) if isinstance(m, AssistantMessage)]
+    assert [m.tools_used for m in replies] == [None, None, ("lookup", "lookup")]
+
+
+async def test_a_turn_that_used_no_tool_records_an_empty_list_not_that_it_was_not_recorded(
+    session_factory, chat
+):
+    await play(make_loop(session_factory, ScriptedLLM(reply("hello"))), chat, "hi")
+
+    assert (await stored(session_factory, chat))[-1].tools_used == ()
+
+
+async def test_a_memory_search_counts_as_a_tool_used(session_factory, chat):
+    llm = ScriptedLLM(tool_call("search_memory", query="vegetarian"), reply("ok"))
+
+    events = await play(make_loop(session_factory, llm, memory_search=True), chat, "hi")
+
+    assert [e.name for e in events if isinstance(e, ToolUsed)] == ["search_memory"]
+    assert (await stored(session_factory, chat))[-1].tools_used == ("search_memory",)
+
+
+async def test_a_tool_that_does_not_exist_is_still_named_because_the_model_tried_it(
+    session_factory, chat
+):
+    llm = ScriptedLLM(tool_call("email_send"), reply("I cannot."))
+
+    events = await play(make_loop(session_factory, llm), chat, "hi")
+
+    assert [e.name for e in events if isinstance(e, ToolUsed)] == ["email_send"]
+    assert (await stored(session_factory, chat))[-1].tools_used == ("email_send",)
+
+
+async def test_a_tool_that_fails_is_still_named(session_factory, chat):
+    llm = ScriptedLLM(tool_call("lookup"), reply("I could not look."))
+
+    events = await play(make_loop(session_factory, llm, tools=FakeTools(fail=True)), chat, "hi")
+
+    assert [e.name for e in events if isinstance(e, ToolUsed)] == ["lookup"]
+    assert isinstance(events[-1], AgentDone)

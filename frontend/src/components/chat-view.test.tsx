@@ -21,6 +21,7 @@ const stored = (id: number, role: "user" | "assistant", text: string, memories: 
   text,
   created_at: "2026-10-30T09:00:00Z",
   memories,
+  tools: [],
 });
 const message = () => screen.getByLabelText("Message");
 const sendButton = () => screen.getByRole("button", { name: "Send" });

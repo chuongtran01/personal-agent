@@ -13,7 +13,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from app.agent.llm import TextDelta
-from app.agent.loop import AgentDone, AgentEvent, MemoryRecalled, Turn, TurnError
+from app.agent.loop import AgentDone, AgentEvent, MemoryRecalled, ToolUsed, Turn, TurnError
 from app.memory.search import SearchResult
 
 log = logging.getLogger(__name__)
@@ -34,6 +34,10 @@ class MemoryPayload(BaseModel):
 
 class TextPayload(BaseModel):
     text: str
+
+
+class ToolPayload(BaseModel):
+    name: str
 
 
 class DonePayload(BaseModel):
@@ -68,6 +72,8 @@ def encode(event: AgentEvent) -> str:
             data = MemoryPayload(
                 current=[_ref(r) for r in event.current], past=[_ref(r) for r in event.past]
             )
+        case ToolUsed():
+            name, data = "tool", ToolPayload(name=event.name)
         case TextDelta():
             name, data = "text", TextPayload(text=event.text)
         case AgentDone():

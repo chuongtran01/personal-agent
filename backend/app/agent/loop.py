@@ -95,6 +95,14 @@ class MemoryRecalled:
 
 
 @dataclass(frozen=True)
+class ToolUsed:
+    """The model is using a tool, sent as the call starts so a client can show it. Just the name:
+    what a tool was asked and what it returned stay out of the stream."""
+
+    name: str
+
+
+@dataclass(frozen=True)
 class AgentDone:
     message_id: int  # the final assistant message
     usage: Usage  # summed over every model call of the turn
@@ -112,7 +120,7 @@ class TurnError:
     message: str
 
 
-AgentEvent = MemoryRecalled | TextDelta | AgentDone | TurnError
+AgentEvent = MemoryRecalled | ToolUsed | TextDelta | AgentDone | TurnError
 
 
 class ToolRunner(Protocol):
@@ -304,6 +312,7 @@ class AgentLoop:
         found_current: dict[int, SearchResult] = {}  # what the model's own searches found
         found_past: dict[int, SearchResult] = {}
         searches: list[str] = []
+        used: list[str] = []  # the names of the tools the model used, for the reply to record
 
         for step in range(1, self._max_steps + 1):
             text, calls = "", []
@@ -333,6 +342,7 @@ class AgentLoop:
                 # Only the reply that ends the turn says what was recalled for it
                 recalled=None if calls else tuple(_merge(recalled.current, found_current)),
                 recalled_past=None if calls else tuple(_merge(recalled.past, found_past)),
+                tools_used=None if calls else tuple(used),
             )
             async with self._sessions() as db:
                 message_id = await store.append(db, turn.session_id, reply)
@@ -354,6 +364,8 @@ class AgentLoop:
                 return
 
             for call in calls:
+                used.append(call.name)
+                yield ToolUsed(call.name)
                 if call.name == memory_tool.NAME and self.searches_memory:
                     searched = await memory_tool.run(
                         call.arguments,
