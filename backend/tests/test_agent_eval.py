@@ -5,7 +5,7 @@ from agent_cases import AgentCase
 from agent_eval import CaseRun, memory_effect, percentile, run_case, summarize
 from fake_embedder import FakeEmbedder
 from memory_cases import EVAL_NOW
-from scripted_llm import ScriptedLLM, reply
+from scripted_llm import ScriptedLLM, reply, tool_call
 from sqlalchemy import func, select
 
 from app.agent.llm import LLMError
@@ -520,3 +520,62 @@ def test_the_summary_counts_what_was_written_and_the_report_shows_it_only_then(c
 
     assert summary["written"] == 3 and "memory changes" in with_writes
     assert "memory changes" not in without
+
+
+# Cases where the model may search its memory ------------------------------------------------------
+
+
+async def test_a_run_records_what_the_model_searched_its_memory_for_and_what_that_found(
+    session_factory, world
+):
+    llm = ScriptedLLM(tool_call("search_memory", query="Porto"), reply("You live in Porto."))
+    loop = AgentLoop(
+        session_factory,
+        llm,
+        FakeEmbedder(),
+        clock=lambda: EVAL_NOW,
+        recall_mode="keyword",
+        memory_search=True,
+        retry_delay=0,
+    )
+    c = case(message="Where do I go for a walk?", must_recall=["home-city"])
+
+    run = await run_case(loop, session_factory, c, 1, SEED, world)
+
+    assert run.searches == ("Porto",)
+    assert "home-city" in run.recalled  # found by the search, counted as recalled
+    assert run.passed and run.steps == 2
+
+
+async def test_a_run_with_the_search_off_records_none(session_factory, world):
+    run, _ = await play(session_factory, world, case(), reply("You live in Porto."))
+
+    assert run.searches == ()
+
+
+def test_the_summary_counts_the_runs_that_searched_and_the_searches():
+    runs = [
+        make("a1", searches=("diet",)),
+        make("a2", searches=("diet", "home city")),
+        make("a3"),
+    ]
+
+    summary = summarize(runs)
+
+    assert summary["searched"] == 2 and summary["searches"] == 3
+
+
+def test_the_report_names_the_searches_only_when_there_were_some(capsys):
+    from agent_eval import print_failures, print_report
+
+    quiet = {"on": summarize([make("a1")])}
+    searched = {"on": summarize([make("a1", searches=("diet",))])}
+
+    print_report(quiet, None)
+    quiet_out = capsys.readouterr().out
+    print_report(searched, None)
+    print_failures([make("a1", passed=False, searches=("diet",))])
+    out = capsys.readouterr().out
+
+    assert "runs that searched" not in quiet_out
+    assert "runs that searched" in out and "searched memory for 'diet'" in out

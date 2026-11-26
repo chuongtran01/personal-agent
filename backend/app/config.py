@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     memory_search_mode: Literal["keyword", "vector", "hybrid", "hybrid_recency"] = "vector"
     recall_limit: int = 5
     recall_history_limit: int = 3
+    # Whether the model may search its memory with its own query, for what recall missed
+    # (docs/PHASE6.md); recall before the first model call is unchanged
+    memory_search_enabled: bool = True
 
     # Limits on a turn (docs/PHASE3.md): model calls per message, characters per message, stored
     # messages per chat

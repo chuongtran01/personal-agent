@@ -87,7 +87,33 @@ async def recall(
     is the message being answered."""
     if not owner_messages or not owner_messages[-1].strip():
         return Recalled(current=())
-    query = build_query(owner_messages)
+    return await recall_query(
+        session,
+        build_query(owner_messages),
+        history=asks_about_the_past(owner_messages[-1]),
+        now=now,
+        embedder=embedder,
+        mode=mode,
+        limit=limit,
+        history_limit=history_limit,
+    )
+
+
+async def recall_query(
+    session: AsyncSession,
+    query: str,
+    *,
+    history: bool,
+    now: datetime,
+    embedder: Embedder,
+    mode: Mode | None = None,
+    limit: int | None = None,
+    history_limit: int | None = None,
+) -> Recalled:
+    """The memories for one query: what may be used now and, with ``history``, the past as well.
+
+    ``recall`` calls this with a query built from the owner's messages; the ``search_memory`` tool
+    calls it with the model's own."""
     mode = mode or settings.memory_search_mode
     embedder = _EmbedOnce(embedder)
     current = await search(
@@ -99,7 +125,7 @@ async def recall(
         embedder=embedder,
     )
     past: list[SearchResult] = []
-    if asks_about_the_past(owner_messages[-1]):
+    if history:
         past = await search(
             session,
             query,

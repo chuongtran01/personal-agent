@@ -2,7 +2,8 @@
 
 A turn saves the message, recalls memories, builds the prompt, calls the model, saves the answer
 and marks the memories used. If the model asks for a tool the loop runs it and calls the model
-again, up to a step limit; no tool is registered yet, so the seam is there for phase 6.
+again, up to a step limit. Tools come from a ``ToolRunner`` (the MCP client), except
+``search_memory``, which the loop runs itself because what it finds has to count as recalled.
 
 Rules the loop keeps (docs/PHASE3.md):
 
@@ -39,11 +40,12 @@ from app.agent.llm import (
     Usage,
 )
 from app.agent.messages import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
-from app.agent.prompt import build_system_prompt
+from app.agent.prompt import build_system_prompt, format_found
 from app.config import settings
+from app.memory import tool as memory_tool
 from app.memory.embeddings import Embedder
 from app.memory.extract import ContextMessage
-from app.memory.recall import Recalled, mark_used, recall
+from app.memory.recall import Recalled, mark_used, recall, recall_query
 from app.memory.search import Mode, SearchResult
 from app.memory.writer import MemoryWriter, WriteJob
 
@@ -99,6 +101,7 @@ class AgentDone:
     steps: int
     recall_seconds: float
     total_seconds: float
+    memory_searches: tuple[str, ...] = ()  # what the model searched its memory for this turn
 
 
 @dataclass(frozen=True)
@@ -128,6 +131,11 @@ class NoTools:
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _merge(recalled: Sequence[SearchResult], found: dict[int, SearchResult]) -> list[int]:
+    """The ids of what recall found and then what the model searched for, each once."""
+    return list(dict.fromkeys([*(r.memory_id for r in recalled), *found]))
 
 
 def _earlier_messages(history: Sequence) -> tuple[ContextMessage, ...]:
@@ -179,6 +187,7 @@ class AgentLoop:
         clock: Callable[[], datetime] = utcnow,
         recall_mode: Mode | None = None,
         recall_enabled: bool = True,
+        memory_search: bool = False,
         memory_writer: MemoryWriter | None = None,
         max_steps: int | None = None,
         retry_delay: float = RETRY_DELAY_SECONDS,
@@ -190,6 +199,7 @@ class AgentLoop:
         self._clock = clock
         self._recall_mode = recall_mode
         self._recall_enabled = recall_enabled
+        self._memory_search = memory_search
         self._memory_writer = memory_writer
         self._max_steps = settings.agent_max_steps if max_steps is None else max_steps
         self._retry_delay = retry_delay
@@ -198,6 +208,12 @@ class AgentLoop:
     @property
     def recall_enabled(self) -> bool:
         return self._recall_enabled
+
+    @property
+    def searches_memory(self) -> bool:
+        """Whether the model is offered ``search_memory``. With recall off (the eval's control) it
+        has no memory to search."""
+        return self._memory_search and self._recall_enabled
 
     @property
     def memory_writer(self) -> MemoryWriter | None:
@@ -271,10 +287,17 @@ class AgentLoop:
             owner_name=settings.owner_name,
             timezone=settings.owner_timezone,
             learns=self._memory_writer is not None,
+            searches=self.searches_memory,
         )
         tools = tuple(self._tools.specs())
+        if self.searches_memory:
+            # The loop's own tool comes first, and a runner may not offer one with the same name
+            tools = (memory_tool.SPEC, *(t for t in tools if t.name != memory_tool.NAME))
         usage = Usage()
         marked = False
+        found_current: dict[int, SearchResult] = {}  # what the model's own searches found
+        found_past: dict[int, SearchResult] = {}
+        searches: list[str] = []
 
         for step in range(1, self._max_steps + 1):
             text, calls = "", []
@@ -299,8 +322,8 @@ class AgentLoop:
                 text=text,
                 tool_calls=tuple(calls),
                 # Only the reply that ends the turn says what was recalled for it
-                recalled=None if calls else tuple(r.memory_id for r in recalled.current),
-                recalled_past=None if calls else tuple(r.memory_id for r in recalled.past),
+                recalled=None if calls else tuple(_merge(recalled.current, found_current)),
+                recalled_past=None if calls else tuple(_merge(recalled.past, found_past)),
             )
             async with self._sessions() as db:
                 message_id = await store.append(db, turn.session_id, reply)
@@ -317,11 +340,34 @@ class AgentLoop:
                     steps=step,
                     recall_seconds=recall_seconds,
                     total_seconds=time.perf_counter() - started,
+                    memory_searches=tuple(searches),
                 )
                 return
 
             for call in calls:
-                result = ToolResultMessage(call_id=call.id, output=await self._run_tool(call))
+                if call.name == memory_tool.NAME and self.searches_memory:
+                    output, new_current, new_past = await self._search_memory(call, now)
+                    searches.append(
+                        str(call.arguments.get("query", ""))[: memory_tool.MAX_QUERY_CHARS]
+                    )
+                    fresh = [
+                        r
+                        for r in (*new_current, *new_past)
+                        if r.memory_id not in found_current
+                        and r.memory_id not in found_past
+                        and r.memory_id not in recalled.memory_ids
+                    ]
+                    found_current.update((r.memory_id, r) for r in new_current)
+                    found_past.update((r.memory_id, r) for r in new_past)
+                    if fresh:
+                        # The live view replaces what it shows with this, so it is everything
+                        yield MemoryRecalled(
+                            (*recalled.current, *found_current.values()),
+                            (*recalled.past, *found_past.values()),
+                        )
+                else:
+                    output = await self._run_tool(call)
+                result = ToolResultMessage(call_id=call.id, output=output)
                 async with self._sessions() as db:
                     await store.append(db, turn.session_id, result)
                 history.append(result)
@@ -357,6 +403,36 @@ class AgentLoop:
                     raise
                 log.info("retrying a model call after: %s", error)
                 await asyncio.sleep(self._retry_delay)
+
+    async def _search_memory(
+        self, call: ToolCall, now: datetime
+    ) -> tuple[str, tuple[SearchResult, ...], tuple[SearchResult, ...]]:
+        """Run the model's memory search: the text to hand back, and what it found.
+
+        What it finds is marked used straight away, since the model reads it now. A failure is a
+        fixed phrase the model can read, and never ends the turn."""
+        query = memory_tool.parse(call.arguments)
+        if isinstance(query, str):
+            return query, (), ()
+        try:
+            async with self._sessions() as db:
+                found = await recall_query(
+                    db,
+                    query.text,
+                    history=query.include_history,
+                    now=now,
+                    embedder=self._embedder,
+                    mode=self._recall_mode,
+                )
+        except Exception:
+            log.exception("the memory search failed")
+            return memory_tool.FAILED, (), ()
+        await self._mark_used(found, now)
+        return (
+            format_found(found.current, found.past, settings.owner_timezone),
+            found.current,
+            found.past,
+        )
 
     async def _run_tool(self, call: ToolCall) -> str:
         try:

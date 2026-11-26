@@ -48,4 +48,11 @@ def build_agent(tools: ToolRunner | None = None) -> AgentLoop:
     if settings.memory_writes_enabled:
         extractor = OpenAIClient(model=settings.extraction_model or settings.agent_model)
         writer = MemoryWriter(SessionLocal, extractor, embedder)
-    return AgentLoop(SessionLocal, chat, embedder, tools=tools, memory_writer=writer)
+    return AgentLoop(
+        SessionLocal,
+        chat,
+        embedder,
+        tools=tools,
+        memory_search=settings.memory_search_enabled,
+        memory_writer=writer,
+    )

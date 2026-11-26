@@ -50,6 +50,7 @@ Category = Literal[
     "duplicate_wording",
     "injection",
     "history",
+    "paraphrase",
 ]
 
 # A case only asks what the agent's default recall allows: owner memories, active, in force.

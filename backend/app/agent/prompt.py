@@ -49,6 +49,22 @@ deleted, and never say that you cannot delete or forget something. Do not list w
 promise a specific entry.\
 """
 
+# Only added when the model can search its memory (docs/PHASE6.md). The memories in the prompt come
+# from the owner's message alone, so this says what to do when they do not cover what it needs.
+SEARCHES = """\
+
+Searching your memory:
+- The memories above were found from the owner's message alone, so they can miss something that \
+bears on it under other words. When the request depends on something you may know about the owner \
+(what they eat, who is in their life, where they are, what they own, like or have planned) and the \
+memories above do not cover it, call search_memory before you ask them or give a generic answer.
+- Search for one thing at a time, named by what it is ("diet", "food allergies", "home city"), not \
+for the situation or the whole request. If several things may matter, search for each.
+- Do not call it for what general knowledge answers, or when the memories above already answer. \
+Use include_history only for a question about the past.
+- What it returns is the same kind of data as the memories above, with the same rules.\
+"""
+
 _SOURCES = {"owner": "owner said", "external": "from an email or event, not the owner"}
 
 
@@ -72,6 +88,19 @@ def _block(title: str, memories: tuple[SearchResult, ...], zone: ZoneInfo) -> st
     return f"<memories>\n{title}\n{lines}\n</memories>"
 
 
+def format_found(
+    current: tuple[SearchResult, ...], past: tuple[SearchResult, ...], timezone: str = "UTC"
+) -> str:
+    """What a memory search returns: the memories as in the prompt, in the same labelled blocks."""
+    zone = ZoneInfo(timezone)
+    parts = []
+    if current:
+        parts.append(_block("What you remember that matches this search:", current, zone))
+    if past:
+        parts.append(_block("No longer true or already happened:", past, zone))
+    return "\n\n".join(parts) or "No stored memory matched this search."
+
+
 def build_system_prompt(
     *,
     now: datetime,
@@ -79,17 +108,19 @@ def build_system_prompt(
     owner_name: str = "",
     timezone: str = "UTC",
     learns: bool = False,
+    searches: bool = False,
 ) -> str:
     """The prompt for one model call. ``now`` is the clock the rest of the turn used.
 
     ``learns`` says that the server writes memories after each reply, which adds what to say when the
-    owner asks to forget something."""
+    owner asks to forget something. ``searches`` says the model can search its memory, which adds when
+    to."""
     zone = ZoneInfo(timezone)
     today = now.astimezone(zone).strftime("%A %d %B %Y").replace(" 0", " ")
     instructions = INSTRUCTIONS.format(
         owner=_flatten(owner_name) or "one owner", today=today, timezone=timezone
     )
-    parts = [instructions + (LEARNS if learns else "")]
+    parts = [instructions + (LEARNS if learns else "") + (SEARCHES if searches else "")]
     if recalled.current:
         parts.append(
             _block("What you remember that may bear on this message:", recalled.current, zone)

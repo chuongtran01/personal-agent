@@ -18,7 +18,7 @@ Two things from earlier phases are finished here. The loop's tool seam (`ToolRun
 - [x] **Calendar and email MCP servers**: `backend/mcp_servers/calendar.py`, `backend/mcp_servers/email.py`, read-only, behind a provider interface with a fake provider for tests and evals
 - [ ] **Google provider**: `backend/mcp_servers/providers/google.py`, read-only scopes, tested against recorded responses with no network
 - [x] **MCP client as a `ToolRunner`**: `backend/app/mcp_client/runner.py`. Lists the servers' tools, calls them with a token, turns every failure into a plain tool result, marks tool output as data
-- [ ] **`search_memory`**: an in-process read-only tool over phase 2's search, so the model can write its own query
+- [x] **`search_memory`**: an in-process read-only tool over phase 2's search, so the model can write its own query
 - [ ] **Prompt and loop changes**: the rules about tool output as data, and when to look something up instead of guessing
 - [ ] **Web app**: the chat view shows which tools a reply used
 - [x] **Injection evals**: emails and events with hidden instructions, dev and held-out
@@ -195,6 +195,38 @@ Built against `mcp` 2.3, a newer SDK than the plan assumed (a unified `Client`, 
 **Checked on real processes.** Both servers as separate processes on real ports, the client over actual HTTP: discovery, both servers' tools, a read of a message, a wrong secret answered "refused", the same token sent twice answered 200 and then 401, a request with no token answered 401, the email server killed mid-session answered "could not be reached" after one retry while the calendar kept working, and a reconnect with the email server down offered only the calendar's tool.
 
 **Left for later in this phase.** The Google provider (the servers take any provider behind the two interfaces, and `MCP_PROVIDER` accepts only `fake` so far); `search_memory` and the router; the prompt and loop rules; the web app's line under a reply. Tools are found when the API starts and again only when it restarts: a server started later is not picked up until then. The memory of used tokens is per process, so a server runs as one worker. The signing secret is shared, so anyone who has it can sign for every tool; per-user secrets and keys come with phase 11.
+
+## `search_memory`, as built
+
+**It is the loop's own tool, not a routed one.** The plan had a router sending `search_memory` to memory and every other name to the MCP client. In the build the loop runs it itself and offers its spec first, because what it finds has to be bookkept exactly as recall's results are: stored on the reply as recalled (so a reloaded chat shows it), marked used, and shown live. A router could not do that without the tool knowing about the turn. A runner that offers a tool with the same name is ignored, and a test pins it. `app/memory/tool.py` has the spec and the argument parsing; `recall.py` got `recall_query(query, history=...)`, which `recall` now calls, so the tool and recall share one search path.
+
+**What the model sees.** The tool takes `query` and an optional `include_history`, and returns the memories in the same labelled blocks as the prompt (flattened, angle brackets escaped, one line each with kind, source and month told), or the fixed phrase "No stored memory matched this search." It asks `search()` for what recall may use, so it never returns text that came from outside, a deleted or replaced memory, or one that has not started; with `include_history` it also returns the past, as recall does for a question about the past. A bad query, an empty one or a failed search is a fixed phrase and never ends the turn.
+
+**What counts as recalled.** Memories a search finds are marked used when the model reads them. The reply that ends the turn stores them with the memories recall found (once each), and the live `memory` event is sent again with everything so far, which the web app already replaces its view with, so it needed no change. `AgentDone.memory_searches` lists what the model searched for, and the agent eval records it.
+
+**The prompt rule.** A short section, added only when the tool is offered: the memories above came from the owner's message alone; when the request depends on something the model may know and they do not cover it, search before asking or giving a generic answer; search for one thing at a time, named by what it is ("diet", "home city"), not for the situation; do not search for what general knowledge answers; what comes back is data under the same rules. The one-thing-at-a-time sentence was added after the first runs showed the model searching for the *location* of a restaurant request (and so finding the home city) and not the diet.
+
+**It is off in the loop by default and on in the server** (`MEMORY_SEARCH_ENABLED`, default true). Every earlier eval builds its own loop and keeps measuring what it measured; the agent eval has `--memory-search on|off`.
+
+**Cases and results.** The `a003` miss has stood since phase 3: "can you suggest a restaurant for dinner tonight?" does not recall "vegetarian". Six paraphrase cases were added to dev and three to the held-out split (a puppy-sitter for New Year's Eve, a road trip for an owner with no car, an early call for someone with no meetings before nine), written before the tool and measured without it first.
+
+| Agent eval | search off | search on |
+| --- | --- | --- |
+| Dev, 3 runs (42 cases, 126 played) | 123 passed | 126 passed |
+| `a003` | 0 of 3 | 3 of 3 |
+| Held-out test, 1 run (23 cases) | 23 passed | 23 passed |
+| Memories in a prompt that may not be there | 0 | 0 |
+| Runs that searched, dev / test | none | 23 of 126, 7 of 23 |
+| Input tokens a message, dev | 489 | 1,065 |
+| Seconds, dev p50 / p95 | 1.0 / 3.1 | 1.2 / 4.9 |
+
+On the earlier targeted runs (`a003` and the six new cases, six runs each) `a003` passed four to five of six, and the one run that did not search for the diet only searched for the city, so it is flaky and not fixed for good. The held-out split has no headroom: its three paraphrase cases pass without the tool, so it shows that nothing got worse and not that anything got better.
+
+**Where it searches.** 18% of dev runs. On the cases where recall misses (`a003`: every run), on questions about something the owner never said or asked to be forgotten (a mother's name, a shoe size, a surgery, an ex-partner, a bank account number: it looks before saying it does not know, and finds nothing, and no deleted or outside memory ever came back), and on vague requests (`a040`, `a041`, `a042`). It did not search for the cases recall already answers. The cost is real: more than double the input tokens a message, because of the tool, its result and the second model call.
+
+**Changes made to dev cases after seeing results.** Three checks, none to the tool. `a040` required the name "Tiago" where "he" is as good, so it now accepts the name, the ceramics gift or the birthday. `a037` required the word "vegetarian" when the model cooked a meatless menu without saying it, so it now forbids meat and fish words instead. `a003` accepted "vegetarian", "veggie" or "meat-free" and a run recommended a fully vegan place, so it now also accepts "vegan" and "plant-based". The first two baselines above (for these cases) were measured before the fixes.
+
+**Checked.** Ten deliberate bugs in the loop (not marking used, storing only recall's ids, never or always telling the live view, offering the tool with recall off, letting a runner replace it, not reporting the searches, letting a failed search end the turn, always searching history, leaving the rule out) were each caught by a test, and the loop was restored byte for byte.
 
 ## Decisions to settle before starting
 

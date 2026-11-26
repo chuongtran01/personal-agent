@@ -3,7 +3,7 @@
 Run from ``backend/`` (``make eval-agent``):
 
     python ../evals/agent_eval.py [--split dev|test] [--memory on|off|both] [--repeat N]
-        [--writes on|off]
+        [--writes on|off] [--memory-search on|off]
 
 The dev split is the one to tune against, read three times (``--repeat 3``); the test split is
 held out and read once. The runner uses its own database, ``agent_eval``, emptied and re-seeded on
@@ -23,6 +23,10 @@ reconciles and writes, and the runner waits for it. A case can then change memor
 rows are snapshotted once (embeddings included) and put back before every case with plain inserts,
 which calls no API; cases run one at a time; and what each case changed is recorded. The default
 is off, which is the phase 3 baseline.
+
+``--memory-search on`` offers the memory-on arm the ``search_memory`` tool, so the model can search
+with its own query for what recall missed, and records how often it did. The default is off, which
+is the baseline every earlier figure was measured with.
 """
 
 import argparse
@@ -79,6 +83,8 @@ class CaseRun:
     total_seconds: float
     # What the agent changed in memory during the case (only with --writes on)
     written: tuple[str, ...] = ()
+    # What the model searched its memory for (only with --memory-search on)
+    searches: tuple[str, ...] = ()
 
 
 @dataclass
@@ -201,6 +207,7 @@ async def run_case(
         recall_seconds=done.recall_seconds if done else 0.0,
         total_seconds=done.total_seconds if done else 0.0,
         written=written,
+        searches=done.memory_searches if done else (),
     )
 
 
@@ -231,6 +238,8 @@ def summarize(runs: list[CaseRun], price_in: float = 0.0, price_out: float = 0.0
         "errors": sum(1 for r in runs if r.error),
         "leaks": sum(len(r.leaks) for r in runs),
         "written": sum(len(r.written) for r in runs),
+        "searched": sum(1 for r in runs if r.searches),
+        "searches": sum(len(r.searches) for r in runs),
         "by_category": {
             c: _rate([r for r in runs if r.category == c])
             for c in sorted({r.category for r in runs})
@@ -276,6 +285,8 @@ def print_report(summaries: dict[str, dict], effect: dict | None) -> None:
     row("turn errors", lambda s: s["errors"])
     if any(s["written"] for s in summaries.values()):
         row("memory changes", lambda s: s["written"])
+    if any(s["searches"] for s in summaries.values()):
+        row("runs that searched", lambda s: f"{s['searched']}/{s['runs']}")
     row(
         "required recalled",
         lambda s: f"{s['recall']['all_required_recalled']}/{s['recall']['runs']}",
@@ -315,6 +326,8 @@ def print_failures(runs: list[CaseRun]) -> None:
             shown.add(r.id)
             print(f"  {r.id} [{r.category}] {', '.join(r.failures)}")
             print(f"      answer: {r.answer[:160]!r}")
+            for query in r.searches:
+                print(f"      searched memory for {query!r}")
             for change in r.written:
                 print(f"      memory: {change}")
 
@@ -335,6 +348,7 @@ async def main(
     price_in: float,
     price_out: float,
     writes: bool = False,
+    memory_search: bool = False,
 ) -> int:
     check_options(writes, concurrency)
     cases = load_all()[split]
@@ -350,7 +364,7 @@ async def main(
     print(
         f"{split} split: {len(cases)} cases x {repeat} run(s), memory "
         f"{'/'.join('on' if a else 'off' for a in arms)}, writes {'on' if writes else 'off'}, "
-        f"model {settings.agent_model}"
+        f"memory search {'on' if memory_search else 'off'}, model {settings.agent_model}"
     )
     eval_url = prepare_database()
     engine = create_async_engine(eval_url)
@@ -382,6 +396,7 @@ async def main(
                 clock=lambda: EVAL_NOW,
                 recall_mode=recall_mode,
                 recall_enabled=memory,
+                memory_search=memory_search,
                 # The memory-off arm neither recalls nor learns, so it stays the control
                 memory_writer=writer if memory else None,
             )
@@ -433,6 +448,7 @@ async def main(
                 "recall_limit": settings.recall_limit,
                 "repeat": repeat,
                 "writes": writes,
+                "memory_search": memory_search,
                 "eval_now": EVAL_NOW.isoformat(),
                 "summary": summaries,
                 "memory_effect": effect,
@@ -465,6 +481,12 @@ if __name__ == "__main__":
         default="off",
         help="let the memory-on arm learn from each turn (needs the key; one case at a time)",
     )
+    parser.add_argument(
+        "--memory-search",
+        choices=["on", "off"],
+        default="off",
+        help="offer the memory-on arm the search_memory tool (needs the key)",
+    )
     parser.add_argument("--recall-mode", choices=MODES, default=None)
     parser.add_argument(
         "--concurrency", type=int, default=1, help="more is faster, and skews the seconds"
@@ -492,6 +514,7 @@ if __name__ == "__main__":
                     arguments.price_in,
                     arguments.price_out,
                     arguments.writes == "on",
+                    arguments.memory_search == "on",
                 )
             )
         )
