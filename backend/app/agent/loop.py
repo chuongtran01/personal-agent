@@ -40,7 +40,7 @@ from app.agent.llm import (
     Usage,
 )
 from app.agent.messages import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
-from app.agent.prompt import build_system_prompt
+from app.agent.prompt import LAST_STEP, build_system_prompt
 from app.config import settings
 from app.memory import tool as memory_tool
 from app.memory.embeddings import Embedder
@@ -188,6 +188,7 @@ class AgentLoop:
         recall_mode: Mode | None = None,
         recall_enabled: bool = True,
         memory_search: bool = False,
+        tool_guidance: bool = False,
         memory_writer: MemoryWriter | None = None,
         max_steps: int | None = None,
         retry_delay: float = RETRY_DELAY_SECONDS,
@@ -200,6 +201,7 @@ class AgentLoop:
         self._recall_mode = recall_mode
         self._recall_enabled = recall_enabled
         self._memory_search = memory_search
+        self._tool_guidance = tool_guidance
         self._memory_writer = memory_writer
         self._max_steps = settings.agent_max_steps if max_steps is None else max_steps
         self._retry_delay = retry_delay
@@ -281,6 +283,10 @@ class AgentLoop:
             recall_seconds = time.perf_counter() - began
         yield MemoryRecalled(recalled.current, recalled.past)
 
+        tools = tuple(self._tools.specs())
+        # With guidance, the model is told how to use tools that reach outside, and the last step of
+        # a turn takes the tools away so that a turn that could not finish still ends in an answer
+        reaches_outside = self._tool_guidance and any(t.name != memory_tool.NAME for t in tools)
         system = build_system_prompt(
             now=now,
             recalled=recalled,
@@ -288,8 +294,8 @@ class AgentLoop:
             timezone=settings.owner_timezone,
             learns=self._memory_writer is not None,
             searches=self.searches_memory,
+            tools=reaches_outside,
         )
-        tools = tuple(self._tools.specs())
         if self.searches_memory:
             # The loop's own tool comes first, and a runner may not offer one with the same name
             tools = (memory_tool.SPEC, *(t for t in tools if t.name != memory_tool.NAME))
@@ -301,8 +307,11 @@ class AgentLoop:
 
         for step in range(1, self._max_steps + 1):
             text, calls = "", []
+            last = reaches_outside and self._max_steps > 1 and step == self._max_steps
             try:
-                async for event in self._call_model(system, history, tools):
+                async for event in self._call_model(
+                    system + LAST_STEP if last else system, history, () if last else tools
+                ):
                     if isinstance(event, TextDelta):
                         text += event.text
                         yield event

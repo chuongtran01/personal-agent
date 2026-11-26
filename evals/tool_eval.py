@@ -4,15 +4,21 @@ the result in code.
 Run from ``backend/`` (``make eval-tools``):
 
     python ../evals/tool_eval.py [--split dev|test] [--tools on|off|both] [--repeat N] [--case ID]
+        [--stack fake|real] [--guidance on|off]
 
 The dev split is the one to tune against, read three times (``--repeat 3``); the test split is held
 out and read once. The runner uses the ``agent_eval`` database, emptied and re-seeded on every run,
 and the clock is fixed at ``EVAL_NOW``. It needs ``OPENAI_API_KEY``: the seed memories, the fake
 mail and calendar the tools return, every question and every answer go to the provider.
 
-The tools are ``FakeTools`` (``tool_fixtures.py``): the three read tools of phase 6 over a made-up
-mailbox and calendar, standing in for the MCP servers. ``--tools off`` plays the same cases with no
-tool at all, the baseline that must say it cannot look. Both arms keep the memory writer on, as in
+The tools are ``FakeTools`` (``tool_fixtures.py``) by default: the three read tools of phase 6 over a
+made-up mailbox and calendar, in process, returning outside text as it is. That is what the first
+baselines were measured with. ``--stack real`` runs the same cases through the real MCP client and
+servers (``tool_stack.py``), so every result is wrapped as outside text and a failure goes through
+the client's own code. ``--guidance on`` adds the prompt section about using the tools and makes
+the last step of a turn answer without tools (``docs/PHASE6.md``); the default is off.
+
+``--tools off`` plays the same cases with no tool at all, the baseline that must say it cannot look. Both arms keep the memory writer on, as in
 use, because one thing the cases check is that nothing the tools return reaches memory. Cases run
 one at a time and every case starts from the same memory (the seeded rows are snapshotted once and
 put back before each).
@@ -27,6 +33,7 @@ import asyncio
 import json
 import statistics
 import sys
+from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +46,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from tool_cases import ToolCase, load_all
 from tool_checks import check_case
 from tool_fixtures import FakeTools
+from tool_stack import real_stack
 
 from app.agent import store
 from app.agent.loop import AgentLoop
@@ -90,6 +98,8 @@ async def run_case(
     seed_memories: dict[str, SeedMemory],
     key_of: dict[int, str],
     saved: Snapshot,
+    stack: str = "fake",
+    guidance: bool = False,
 ) -> CaseRun:
     """Play the earlier turns and the judged message in a fresh chat, then check the last answer.
 
@@ -101,49 +111,52 @@ async def run_case(
     async with session_factory() as db:
         session_id = await store.create_session(db)
     # The hard injection cases are the only ones that see the extra mail and events
-    tools = (
-        FakeTools(failure=case.failure, hard=case.category == "injection_hard")
-        if tools_on
-        else None
-    )
-    loop = AgentLoop(
-        session_factory,
-        llm,
-        embedder,
-        tools=tools,
-        clock=lambda: EVAL_NOW,
-        memory_writer=writer,
-        retry_delay=0,
-    )
+    hard = case.category == "injection_hard"
+    async with AsyncExitStack() as exit_stack:
+        tools = None
+        if tools_on and stack == "real":
+            tools = await exit_stack.enter_async_context(real_stack(case.failure, hard))
+        elif tools_on:
+            tools = FakeTools(failure=case.failure, hard=hard)
+        loop = AgentLoop(
+            session_factory,
+            llm,
+            embedder,
+            tools=tools,
+            clock=lambda: EVAL_NOW,
+            memory_writer=writer,
+            tool_guidance=guidance,
+            retry_delay=0,
+        )
 
-    async def say(text_: str) -> Turned:
-        played = await play(loop, session_id, text_, key_of)
-        if writer is not None:
-            await writer.drain()
-        return played
+        async def say(text_: str) -> Turned:
+            played = await play(loop, session_id, text_, key_of)
+            if writer is not None:
+                await writer.drain()
+            return played
 
-    turned = Turned()
-    for earlier in case.prior_turns:
-        turned = await say(earlier)
-        if turned.error:
-            break
-    if not turned.error:
-        turned = await say(case.message)
-    async with session_factory() as db:
-        rows = (await db.execute(select(Memory.id, Memory.content, Memory.status))).all()
-    changes = describe_changes(saved, [tuple(row) for row in rows], key_of)
+        turned = Turned()
+        for earlier in case.prior_turns:
+            turned = await say(earlier)
+            if turned.error:
+                break
+        if not turned.error:
+            turned = await say(case.message)
+        async with session_factory() as db:
+            rows = (await db.execute(select(Memory.id, Memory.content, Memory.status))).all()
+        changes = describe_changes(saved, [tuple(row) for row in rows], key_of)
 
-    calls = tools.calls if tools else []
-    verdict = check_case(
-        case,
-        seed_memories,
-        calls,
-        turned.current,
-        turned.past,
-        turned.answer,
-        turned.error,
-        changes,
-    )
+        calls = tools.calls if tools else []
+        verdict = check_case(
+            case,
+            seed_memories,
+            calls,
+            turned.current,
+            turned.past,
+            turned.answer,
+            turned.error,
+            changes,
+        )
     done = turned.done
     return CaseRun(
         id=case.id,
@@ -274,7 +287,14 @@ def gate_failures(summaries: dict[str, dict]) -> list[str]:
     return problems
 
 
-async def main(split: str, arms: list[bool], repeat: int, only: list[str]) -> int:
+async def main(
+    split: str,
+    arms: list[bool],
+    repeat: int,
+    only: list[str],
+    stack: str = "fake",
+    guidance: bool = False,
+) -> int:
     cases = load_all()[split]
     if only:
         unknown = set(only) - {c.id for c in cases}
@@ -287,7 +307,8 @@ async def main(split: str, arms: list[bool], repeat: int, only: list[str]) -> in
     by_key = {m.key: m for m in seed_memories}
     print(
         f"{split} split: {len(cases)} cases x {repeat} run(s), tools "
-        f"{'/'.join('on' if a else 'off' for a in arms)}, model {settings.agent_model}"
+        f"{'/'.join('on' if a else 'off' for a in arms)}, {stack} stack, guidance "
+        f"{'on' if guidance else 'off'}, model {settings.agent_model}"
     )
     engine = create_async_engine(prepare_database())
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -321,6 +342,8 @@ async def main(split: str, arms: list[bool], repeat: int, only: list[str]) -> in
                     by_key,
                     key_of,
                     saved,
+                    stack,
+                    guidance,
                 )
                 for run in range(1, repeat + 1)
                 for case in cases
@@ -346,6 +369,8 @@ async def main(split: str, arms: list[bool], repeat: int, only: list[str]) -> in
                 "created_at": stamp,
                 "model": settings.agent_model,
                 "repeat": repeat,
+                "stack": stack,
+                "guidance": guidance,
                 "eval_now": EVAL_NOW.isoformat(),
                 "summary": summaries,
                 "runs": [asdict(r) for arm_runs in runs.values() for r in arm_runs],
@@ -371,6 +396,18 @@ if __name__ == "__main__":
     parser.add_argument("--split", choices=SPLITS, default="dev")
     parser.add_argument("--tools", choices=list(ARMS), default="both")
     parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument(
+        "--stack",
+        choices=["fake", "real"],
+        default="fake",
+        help="fake: in-process stand-in tools; real: the MCP client and servers, in process",
+    )
+    parser.add_argument(
+        "--guidance",
+        choices=["on", "off"],
+        default="off",
+        help="the prompt section about using tools, and no tools on the last step",
+    )
     parser.add_argument("--case", action="append", default=[], help="run only this case id")
     arguments = parser.parse_args()
     if arguments.repeat < 1:
@@ -378,7 +415,14 @@ if __name__ == "__main__":
     try:
         sys.exit(
             asyncio.run(
-                main(arguments.split, ARMS[arguments.tools], arguments.repeat, arguments.case)
+                main(
+                    arguments.split,
+                    ARMS[arguments.tools],
+                    arguments.repeat,
+                    arguments.case,
+                    arguments.stack,
+                    arguments.guidance == "on",
+                )
             )
         )
     except (EvalError, InvalidDataset) as error:

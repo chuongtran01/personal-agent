@@ -54,5 +54,6 @@ def build_agent(tools: ToolRunner | None = None) -> AgentLoop:
         embedder,
         tools=tools,
         memory_search=settings.memory_search_enabled,
+        tool_guidance=tools is not None,
         memory_writer=writer,
     )
