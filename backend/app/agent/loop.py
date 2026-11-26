@@ -40,12 +40,12 @@ from app.agent.llm import (
     Usage,
 )
 from app.agent.messages import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
-from app.agent.prompt import build_system_prompt, format_found
+from app.agent.prompt import build_system_prompt
 from app.config import settings
 from app.memory import tool as memory_tool
 from app.memory.embeddings import Embedder
 from app.memory.extract import ContextMessage
-from app.memory.recall import Recalled, mark_used, recall, recall_query
+from app.memory.recall import Recalled, mark_used, recall
 from app.memory.search import Mode, SearchResult
 from app.memory.writer import MemoryWriter, WriteJob
 
@@ -346,19 +346,25 @@ class AgentLoop:
 
             for call in calls:
                 if call.name == memory_tool.NAME and self.searches_memory:
-                    output, new_current, new_past = await self._search_memory(call, now)
-                    searches.append(
-                        str(call.arguments.get("query", ""))[: memory_tool.MAX_QUERY_CHARS]
+                    searched = await memory_tool.run(
+                        call.arguments,
+                        sessions=self._sessions,
+                        embedder=self._embedder,
+                        now=now,
+                        mode=self._recall_mode,
+                        timezone=settings.owner_timezone,
                     )
+                    output = searched.text
+                    searches.append(searched.query)
                     fresh = [
                         r
-                        for r in (*new_current, *new_past)
+                        for r in (*searched.current, *searched.past)
                         if r.memory_id not in found_current
                         and r.memory_id not in found_past
                         and r.memory_id not in recalled.memory_ids
                     ]
-                    found_current.update((r.memory_id, r) for r in new_current)
-                    found_past.update((r.memory_id, r) for r in new_past)
+                    found_current.update((r.memory_id, r) for r in searched.current)
+                    found_past.update((r.memory_id, r) for r in searched.past)
                     if fresh:
                         # The live view replaces what it shows with this, so it is everything
                         yield MemoryRecalled(
@@ -403,36 +409,6 @@ class AgentLoop:
                     raise
                 log.info("retrying a model call after: %s", error)
                 await asyncio.sleep(self._retry_delay)
-
-    async def _search_memory(
-        self, call: ToolCall, now: datetime
-    ) -> tuple[str, tuple[SearchResult, ...], tuple[SearchResult, ...]]:
-        """Run the model's memory search: the text to hand back, and what it found.
-
-        What it finds is marked used straight away, since the model reads it now. A failure is a
-        fixed phrase the model can read, and never ends the turn."""
-        query = memory_tool.parse(call.arguments)
-        if isinstance(query, str):
-            return query, (), ()
-        try:
-            async with self._sessions() as db:
-                found = await recall_query(
-                    db,
-                    query.text,
-                    history=query.include_history,
-                    now=now,
-                    embedder=self._embedder,
-                    mode=self._recall_mode,
-                )
-        except Exception:
-            log.exception("the memory search failed")
-            return memory_tool.FAILED, (), ()
-        await self._mark_used(found, now)
-        return (
-            format_found(found.current, found.past, settings.owner_timezone),
-            found.current,
-            found.past,
-        )
 
     async def _run_tool(self, call: ToolCall) -> str:
         try:

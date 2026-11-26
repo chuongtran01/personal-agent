@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 from fake_embedder import FakeEmbedder
 from memory_cases import EVAL_NOW
@@ -332,7 +334,7 @@ async def test_a_search_that_fails_gives_a_fixed_phrase_and_the_turn_goes_on(
     async def broken(*args, **kwargs):
         raise RuntimeError("the database said: secret detail")
 
-    monkeypatch.setattr("app.agent.loop.recall_query", broken)
+    monkeypatch.setattr("app.memory.tool.recall_query", broken)
     llm = ScriptedLLM(search(query="vegetarian"), reply("I could not look."))
 
     events = await play(make_loop(session_factory, llm), chat, "hello")
@@ -362,7 +364,7 @@ async def test_a_failure_in_marking_used_does_not_lose_the_answer(
     async def broken(*args, **kwargs):
         raise RuntimeError("could not write")
 
-    monkeypatch.setattr("app.agent.loop.mark_used", broken)
+    monkeypatch.setattr("app.memory.tool.mark_used", broken)
     llm = ScriptedLLM(search(query="vegetarian"), reply("done"))
 
     events = await play(make_loop(session_factory, llm), chat, "hello")
@@ -383,3 +385,114 @@ def test_the_prompt_rule_is_added_only_when_asked():
 
     assert SEARCHES not in build_system_prompt(**base)
     assert SEARCHES in build_system_prompt(**base, searches=True)
+
+
+# The tool on its own, without the loop ---------------------------------------------------------
+
+
+async def run_tool(session_factory, arguments, **kwargs):
+    kwargs.setdefault("mode", "keyword")
+    return await tool.run(
+        arguments, sessions=session_factory, embedder=FakeEmbedder(), now=NOW, **kwargs
+    )
+
+
+async def test_run_returns_the_text_what_it_found_and_what_it_searched_for(session_factory, seeded):
+    searched = await run_tool(session_factory, {"query": "  vegetarian \n food "})
+
+    assert searched.query == "vegetarian food"
+    assert [r.memory_id for r in searched.current] == [seeded["diet"]] and searched.past == ()
+    assert searched.text.startswith("<memories>\nWhat you remember that matches this search:")
+
+
+async def test_run_marks_what_it_found_as_used_and_nothing_else(session_factory, seeded):
+    await run_tool(session_factory, {"query": "vegetarian"})
+
+    async with session_factory() as db:
+        rows = dict((await db.execute(select(Memory.id, Memory.last_used_at))).all())
+    assert rows[seeded["diet"]] == NOW
+    assert [k for k, v in rows.items() if v is not None] == [seeded["diet"]]
+
+
+async def test_run_with_history_returns_the_past_apart_from_the_present(session_factory, seeded):
+    searched = await run_tool(session_factory, {"query": "Alfama", "include_history": True})
+
+    assert [r.memory_id for r in searched.past] == [seeded["home-city-old"]]
+    assert searched.current == () and "No longer true or already happened:" in searched.text
+
+
+async def test_run_with_nothing_found_marks_nothing_and_says_so(session_factory, seeded):
+    searched = await run_tool(session_factory, {"query": "zeppelin"})
+
+    assert searched.text == "No stored memory matched this search."
+    assert searched.current == () and searched.past == ()
+    async with session_factory() as db:
+        used = (await db.execute(select(Memory.id).where(Memory.last_used_at.is_not(None)))).all()
+    assert used == []
+
+
+@pytest.mark.parametrize(
+    ("arguments", "phrase", "query"),
+    [
+        ({"query": ""}, tool.EMPTY_QUERY, ""),
+        ({"query": 3}, tool.BAD_ARGUMENTS, ""),
+        ({}, tool.BAD_ARGUMENTS, ""),
+    ],
+)
+async def test_run_with_arguments_it_cannot_use_searches_nothing(
+    session_factory, seeded, arguments, phrase, query, monkeypatch
+):
+    async def never(*args, **kwargs):
+        raise AssertionError("the search must not run")
+
+    monkeypatch.setattr("app.memory.tool.recall_query", never)
+
+    searched = await run_tool(session_factory, arguments)
+
+    assert (searched.text, searched.query, searched.current) == (phrase, query, ())
+
+
+async def test_run_never_raises_and_keeps_what_was_searched_for_when_the_search_fails(
+    session_factory, seeded, monkeypatch, caplog
+):
+    async def broken(*args, **kwargs):
+        raise RuntimeError("the database said: secret detail")
+
+    monkeypatch.setattr("app.memory.tool.recall_query", broken)
+
+    searched = await run_tool(session_factory, {"query": "vegetarian"})
+
+    assert searched.text == tool.FAILED and searched.query == "vegetarian"
+    assert "secret detail" not in searched.text
+
+
+async def test_run_still_returns_the_memories_when_marking_them_used_fails(
+    session_factory, seeded, monkeypatch
+):
+    async def broken(*args, **kwargs):
+        raise RuntimeError("could not write")
+
+    monkeypatch.setattr("app.memory.tool.mark_used", broken)
+
+    searched = await run_tool(session_factory, {"query": "vegetarian"})
+
+    assert "vegetarian" in searched.text and len(searched.current) == 1
+
+
+async def test_run_formats_dates_in_the_owners_zone(session_factory):
+    async with session_factory() as db:
+        db.add(
+            Memory(
+                kind="fact",
+                content="The owner moved flat.",
+                status="active",
+                source_kind="owner",
+                created_at=datetime(2026, 1, 31, 23, 30, tzinfo=UTC),
+            )
+        )
+        await db.commit()
+
+    utc = await run_tool(session_factory, {"query": "flat"})
+    lisbon_ahead = await run_tool(session_factory, {"query": "flat"}, timezone="Pacific/Auckland")
+
+    assert "told January 2026" in utc.text and "told February 2026" in lisbon_ahead.text
